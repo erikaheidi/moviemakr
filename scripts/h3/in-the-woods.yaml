@@ -1,0 +1,499 @@
+# in-the-woods - a ten-scene short: the dog follows a wild rabbit out of the
+# holiday house, down a burrow, into a Wonderland tea party - and wakes up.
+#
+#   ./moviemakr.py render scripts/h3/in-the-woods.yaml --dry-run
+#   ./moviemakr.py render scripts/h3/in-the-woods.yaml --only 1
+#   ./moviemakr.py render scripts/h3/in-the-woods.yaml
+#   ./moviemakr.py status scripts/h3/in-the-woods.yaml
+#
+# Prompts are written through the `h3-prompt-writing` skill in full-reference
+# (Ref2VA) form - see .claude/skills/h3-prompt-writing/references/ref-en.txt.
+# The same two adaptations as scripts/h3/josy-house-party.yaml apply, because
+# moviemakr generates one shot per docker run rather than a whole movie:
+#
+#   1. Every scene is a single [Shot 1] with no cut timestamp. The cuts in this
+#      story happen between docker runs, not inside them.
+#   2. detailed_description runs ~140-180 words, not the guide's 350-500. That
+#      range is for a full multi-shot video; the guide's own rule is to spread
+#      detail by information load, and one ~4-second shot carries far less.
+#
+# ---------------------------------------------------------------------------
+# THE <Picture N> CONTRACT - read before editing any prompt
+# ---------------------------------------------------------------------------
+# Refs reach sd-cli as: chained previous frame first (render() inserts it at
+# index 0), then continuity.anchors in order, then the scene's own ref_images.
+#
+# Unlike scripts/h3/josy-house-party.yaml, only ONE image is a global anchor
+# here - josy-reference.jpg, the one thing every scene needs. The rabbit, the
+# two location stills, and the Tenniel engraving are attached per scene, so no
+# scene is handed a reference it has no job for. (A defined-but-unused label is
+# a dangling label, and the model will try to honour it - the surest way to get
+# a rabbit into the shot where she is supposed to be alone.)
+#
+# That makes the labels differ per scene. The full table:
+#
+#   scene 1  (chain off):  <P1> josy  <P2> centerparcs01  <P3> bunny
+#   scene 2:               <P1> prev  <P2> josy  <P3> centerparcs02  <P4> bunny
+#   scenes 3, 4, 5:        <P1> prev  <P2> josy  <P3> bunny
+#   scenes 6, 7:           <P1> prev  <P2> josy  <P3> bunny  <P4> alice
+#   scene 8  (chain off):  <P1> josy  <P2> centerparcs01
+#   scene 9:               <P1> prev  <P2> josy  <P3> centerparcs01  <P4> bunny
+#   scene 10:              <P1> prev  <P2> josy
+#
+# If you add or remove a ref_image, or flip chain_from_previous, every label in
+# that scene shifts. Re-check the whole prompt, not just the line you edited.
+#
+# <Subject N> numbering is per scene, in order of first appearance, as the guide
+# specifies. The same dog is <Subject 1> in scene 1 and <Subject 2> in scene 6.
+# That is correct; each scene is an independent generation.
+#
+# ---------------------------------------------------------------------------
+# TWO SCENES DELIBERATELY BREAK THE CHAIN
+# ---------------------------------------------------------------------------
+# Scene 8 is the hard cut out of the dream, back to the couch. Chaining it would
+# hand it the tea-party clearing as its strongest reference and ask it to render
+# a living room anyway. It gets chain_from_previous: false and leans on
+# centerparcs01 instead. Scene 1 is the opening and has nothing to chain from.
+#
+# Scenes 8 and 9 still contribute their last frames downstream normally - only
+# what scene 8 *receives* is cut.
+#
+# ---------------------------------------------------------------------------
+# KEEPING HER FEMALE - don't drop these when editing
+# ---------------------------------------------------------------------------
+# Carried over from scripts/h3/josy-house-party.yaml, where the first take of
+# scene 1 rendered a male dog despite a dozen "she"s. Grammatical gender is weak
+# conditioning for this model, and a negative prompt cannot fix it (cfg_scale is
+# 1.0, so CFG is off and the negative prompt is never evaluated). Two things
+# carry it instead, in every scene where her body is visible:
+#
+#   1. Build, not pronouns. "small, compact, petite, narrow finely-boned head,
+#      slender neck, light delicate frame" - male frenchies have broader,
+#      blockier skulls and thicker necks, and that dimorphism is something the
+#      model has actually learned. This appears in BOTH subject_definitions and
+#      at her first appearance in detailed_description.
+#   2. The camera is kept off her rear. What read as male was anatomy exposed by
+#      framing from behind and below. Most scenes state shoulder-height framing
+#      and front or three-quarter views.
+#
+# Scene 5 is the exception the story requires - the draft asks for the camera
+# to follow behind her into the burrow. It is written as a following shot held
+# at shoulder height and framed on her back, shoulders and ears, explicitly
+# above her hips and never dropping below her. Watch this one on the first take.
+#
+# ---------------------------------------------------------------------------
+# WONDERLAND WITHOUT THE ENGRAVING
+# ---------------------------------------------------------------------------
+# alice-in-wonderland.jpg is a hand-coloured Tenniel engraving and the rest of
+# the film is photoreal. In scenes 6 and 7 it is labelled weak_reference on
+# purpose: it supplies staging only - the long white cloth, the mismatched
+# gold-rimmed china, the high-backed chairs outdoors under trees, the rabbit
+# sitting upright in a human-like pose - and the prompts restate the
+# photoreal look so the drawing's line and flat colour do not come with it.
+name: in-the-woods
+
+model:
+  root: /home/erika/Projects/ai-models
+  diffusion_model: minimax-h3/minimax_h3_ref2va_pruned-Q8_0.gguf
+  llm:             minimax-h3/qwen3vl_32b_minimax_h3-Q4_K_M.gguf
+  vae:             minimax-h3/minimax_h3_video_vae_fp16.safetensors
+  audio_vae:       minimax-h3/minimax_h3_audio_vae_fp32.safetensors
+
+docker:
+  image: ghcr.io/leejet/stable-diffusion.cpp:master-vulkan
+  devices: [/dev/dri/card1, /dev/dri/renderD128, /dev/kfd]
+  run_as_current_user: true
+
+defaults:
+  # Portrait, like every other script here - it is what this box has actually
+  # rendered. The location stills are landscape and scenes 6, 7 and 9 are the
+  # widest shots in the film, so swapping to 960x544 is defensible; the pixel
+  # budget is identical, but it is untested here, so it is not the default.
+  width: 544
+  height: 960
+  fps: 24
+  # ~3.75s. sd-cli rounds this UP, and not by one or two: measured on this box at
+  # 544x960, 90 stays 90, 100 becomes 107, and 110 becomes 124. Check the
+  # "generate_video 544x960xN" line in the log for what you actually got. 107 is
+  # the largest count proven to render here - 124 DeviceLost'd three times out of
+  # three on josy-house-party - so treat 100 as the hard ceiling for this script.
+  video_frames: 90
+  cfg_scale: 1.0
+  seed: 42
+  negative_prompt: ""       # no effect at cfg_scale 1.0 - CFG is off, so the
+                            # negative prompt is never evaluated. Steer with
+                            # positive description instead.
+  # MUST stay empty for H3-structured prompts. full_prompt() appends the suffix
+  # as ". <suffix>" at the very end - which here is the end of
+  # non_diegetic_music, so the style text would read as part of the score. The
+  # look lives in each scene's detailed_description opening line instead.
+  style_suffix: ""
+  extra_args: ["--diffusion-fa", "--mmap", "--backend", "te=cpu"]
+
+continuity:
+  # One anchor only. She is in nine of the ten scenes and is the one thing that
+  # must not drift; everything else is scene-local. See the label contract above
+  # for why the rabbit is not an anchor.
+  anchors:
+    - josy-reference.jpg
+
+  # Reference *videos* stay empty on purpose: on this box a --ref-video either
+  # crashes the GPU with DeviceLost or drags the whole pipeline onto the CPU.
+  # Reference images do not - chaining has always used them.
+  anchor_videos: []
+
+  chain_from_previous: true
+
+output:
+  container: mp4
+  audio: keep
+  music: null
+
+scenes:
+  # -------------------------------------------------------------------------
+  # 1. Something moves outside.
+  # -------------------------------------------------------------------------
+  # The only scene besides 8 with chain_from_previous: false, so it sees the
+  # anchor plus its own two refs. It carries three beats (asleep, notice, lock
+  # on) and has to establish the whole room, which is why it gets 100 frames.
+  #
+  # The rabbit is a shape behind glass here, not a character yet - so
+  # <Picture 3> is honestly labelled partially_preserved. Giving it a small real
+  # job is better than passing it and not mentioning it.
+  - id: the-glimpse
+    chain_from_previous: false
+    video_frames: 100         # ~4.17s - three beats and a whole room
+    ref_images:
+      - centerparcs01.jpg
+      - bunny.jpg
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the small female French bulldog in <Picture 1>, compact and petite with a narrow finely-boned head, a slender neck, and a light delicate frame, with a short dark brindle coat that reads almost black, faint lighter brindle striping over her flanks, a white blaze covering the centre of her chest, large upright bat ears, wide round dark eyes, a short deeply wrinkled muzzle, and a flat black nose.
+      <Subject 2> is the holiday-house living room in <Picture 2>, with a pale grey wood-look laminate floor, a dark teal-blue fabric couch carrying a long mustard-yellow bolster cushion, a low grey daybed opposite it, floor-length beige curtains at the left edge, and a wall of tall black-framed sliding glass doors looking out onto a wet reddish-brown terrace, a white garden table with folding chairs, a closed dark parasol, and dense green woodland under a flat overcast sky.
+      <Subject 3> is the wild European rabbit in <Picture 3>, small and rounded, with dense grey-brown agouti fur, a paler sandy face, long upright ears, and a short pale underside.
+      <Picture 2> is the composition anchor for this shot, fixing the viewpoint, the couch position, and the glass wall.
+
+      summary:
+      [reference generation + keyframe completion] The target video holds the exact viewpoint of <Picture 2>, looking across the living room of <Subject 2> and out through the sliding glass doors. <Subject 1> lies curled and apparently asleep on the teal couch. One door panel stands slightly open. <Subject 3> crosses the terrace outside; she wakes, lifts her head, and locks on. <Picture 1> supplies her appearance.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the near-black brindle coat, white chest blaze, large upright bat ears, round dark eyes, and short wrinkled muzzle are retained.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - the pale grey laminate floor, dark teal couch with its mustard-yellow bolster, grey daybed, beige curtains, black-framed glass doors, wet terrace, garden table, closed parasol, and green woodland beyond are retained.
+      <Subject 3> (appears in [Shot 1]): partially_preserved - the grey-brown agouti fur, pale face, and long upright ears are retained, seen small, distant, and softened through glass rather than in close detail.
+      <Picture 2> ([Shot 1] composition anchor): fully_preserved - the viewpoint, couch placement, and glass wall are held for the whole shot; the dog and the opened door panel are new.
+
+      detailed_description:
+      The target video is photorealistic live-action cinematic footage, cool and quiet, lit by flat grey daylight through a wall of glass, with shallow depth of field and fine film grain.
+      [Shot 1] The camera holds the framing of <Picture 2> exactly and stays locked off: the pale grey laminate floor of <Subject 2> running to a wall of tall black-framed sliding glass doors, the dark teal couch with its mustard-yellow bolster cushion filling the lower left, the woodland terrace beyond. The house is empty and silent. One glass panel stands open a hand's width, and the beige curtain beside it stirs. <Subject 1>, the small compact female French bulldog with the narrow finely-boned head, slender neck, white chest blaze, and large upright bat ears, lies curled along the couch in profile, head down on her paws, eyes shut, flanks rising slowly. Outside, past the wet reddish-brown paving and the white garden table, <Subject 3>, the grey-brown wild rabbit, hops into the far grass and stops. Her ears snap upright. Her eyes open. She lifts her head off her paws, holds absolutely still with her muzzle angled toward the glass, then pushes up onto her front legs, chest and white blaze turned toward the camera, staring out.
+
+      overall_soundscape: Quiet empty-house room tone throughout, with a faint draught whistling through the gap in the open door. Light rain drips off the eaves outside, wind moves through the trees, a wood pigeon calls twice at a distance, and a curtain rustles. Fabric shifts on the couch and one short sharp sniff comes through a flat muzzle.
+
+      non_diegetic_music: A single sustained low string note, very quiet under the room tone, joined by one soft struck piano note the moment her head lifts, holding unresolved to the end of the shot.
+
+  # -------------------------------------------------------------------------
+  # 2. Outside, and the meeting.
+  # -------------------------------------------------------------------------
+  # The one scene that crosses the threshold, so it needs both locations: the
+  # chained frame carries the interior it starts in and centerparcs02 supplies
+  # the terrace it ends on. Two beats plus the head tilt - 100 frames.
+  #
+  # The tilt is the payoff and it is placed last on purpose. If it gets clipped,
+  # shorten the approach rather than raising video_frames past 100.
+  - id: the-approach
+    video_frames: 100         # ~4.17s - the exit, the approach, and the tilt
+    ref_images:
+      - centerparcs02.jpg
+      - bunny.jpg
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the small female French bulldog in <Picture 1> and <Picture 2>, compact and petite with a narrow finely-boned head, a slender neck, and a light delicate frame, with a short dark brindle coat that reads almost black, a white blaze covering the centre of her chest, large upright bat ears, wide round dark eyes, and a short deeply wrinkled muzzle.
+      <Subject 2> is the terrace of the holiday house in <Picture 3>, with reddish-brown pebbled concrete paving still wet from rain, a wooden-topped garden table on a white metal frame, white sling folding chairs, a tall closed black parasol, a grey stone chimenea, two white sun loungers at the left, dry yellowed grass beyond the paving, and a dense green hedge and tall pines under an overcast sky.
+      <Subject 3> is the wild European rabbit in <Picture 4>, small and rounded, with dense grey-brown agouti fur, a paler sandy face and cheeks, long upright ears with dark rims, one large round black eye, a pale underside, and a short white-grey tail.
+
+      summary:
+      [reference generation] The target video follows <Subject 1> out through the open glass door and across the terrace of <Subject 2> to meet <Subject 3>, which sits up on the dry grass and watches her come without bolting. She slows to a careful walk, stops a body-length away, and tilts her head far over to one side. <Picture 1> supplies the interior she leaves; <Picture 2> supplies her appearance.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the near-black brindle coat, white chest blaze, large upright bat ears, round dark eyes, and short wrinkled muzzle are retained.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - the wet reddish-brown pebbled paving, wooden garden table, white folding chairs, closed black parasol, stone chimenea, dry grass, and green hedge and pines are retained, seen from a much lower viewpoint.
+      <Subject 3> (appears in [Shot 1]): fully_preserved - the grey-brown agouti fur, pale sandy face, long upright ears, and round black eye are retained.
+
+      detailed_description:
+      The target video is photorealistic live-action cinematic footage, cool and quiet, lit by flat grey overcast daylight, with shallow depth of field and fine film grain.
+      [Shot 1] The camera begins inside at knee height behind <Subject 1>'s shoulder, the small compact female French bulldog with the narrow finely-boned head, slender neck, white chest blaze, and large upright bat ears, as she noses the open glass panel wider and steps out. It tracks with her at walking pace, swinging around to her side so she is held in profile and three-quarter front view at shoulder height, and stays there for the rest of the shot. Her claws tick across the wet reddish-brown paving of <Subject 2>, past the white folding chairs and the tall closed parasol. Ahead, on the dry yellowed grass, <Subject 3>, the grey-brown wild rabbit, sits up on its haunches, ears straight up, nose working. She slows, then stalks forward one deliberate paw at a time, head low and level. A body-length short of the rabbit she stops. Her ears rise to full upright. She tips her whole head far over to her right and holds it there.
+
+      overall_soundscape: Outdoor woodland ambience throughout - wind through pines, water dripping from wet foliage, and layered birdsong with one wood pigeon close by. A glass door rolls in its track, claws tick and scuff on wet pebbled concrete, dry grass rustles, and a flat muzzle snuffles rapidly.
+
+      non_diegetic_music: A sparse plucked-harp figure over a warm sustained pad, slow and curious, thinning to one held note as she stops, with a single soft woodwind trill on the head tilt.
+
+  # -------------------------------------------------------------------------
+  # 3. Tag.
+  # -------------------------------------------------------------------------
+  # The busiest scene in the film - two animals moving fast in opposite
+  # directions - so it gets 100 frames and no location ref. The chained frame
+  # already holds the grass and the treeline; adding centerparcs02 here would
+  # only pull the shot back toward the paving and the furniture.
+  - id: the-chase
+    video_frames: 100         # ~4.17s - a full exchange of chases
+    ref_images:
+      - bunny.jpg
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the small female French bulldog in <Picture 1> and <Picture 2>, compact and petite with a narrow finely-boned head, a slender neck, and a light delicate frame, with a short dark brindle coat that reads almost black, a white blaze covering the centre of her chest, large upright bat ears, and a short deeply wrinkled muzzle.
+      <Subject 2> is the wild European rabbit in <Picture 1> and <Picture 3>, small and rounded, with dense grey-brown agouti fur, a paler sandy face, long upright ears, a round black eye, and a short white-grey tail.
+      <Subject 3> is the lawn behind the holiday house in <Picture 1>, dry yellowed grass scattered with fallen leaves, backed by a dense green hedge and tall pines under an overcast sky.
+
+      summary:
+      [reference generation] The target video shows <Subject 1> and <Subject 2> playing tag across <Subject 3>. She drops into a play bow, the rabbit bolts, she gives chase in a wide circle, then the rabbit doubles back and runs at her and she scrambles away in turn. Both are plainly enjoying it. <Picture 2> supplies her appearance and <Picture 3> the rabbit's.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the near-black brindle coat, white chest blaze, large upright bat ears, and short wrinkled muzzle are retained.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - the grey-brown agouti fur, pale sandy face, long upright ears, and short white-grey tail are retained.
+      <Subject 3> (appears in [Shot 1]): fully_preserved - the dry yellowed grass, fallen leaves, green hedge, and tall pines are retained, seen wider than before.
+
+      detailed_description:
+      The target video is photorealistic live-action cinematic footage, cool and bright, lit by flat grey overcast daylight, with shallow depth of field and fine film grain.
+      [Shot 1] A low wide shot looks across the dry yellowed grass of <Subject 3>, the green hedge and pines filling the background. <Subject 1>, the small compact female French bulldog with the narrow finely-boned head, slender neck, and white chest blaze, drops into a play bow in the centre of frame, chest flat to the ground, rear end high, stub tail whipping, mouth open and tongue out. <Subject 2>, the grey-brown rabbit, thumps a hind foot and bolts left. She launches after it, ears flattened by her own speed, feet throwing up loose grass and leaves. The camera pans left with them at moderate speed, holding both in profile. The rabbit cuts a tight turn, doubles straight back past her shoulder, and she over-runs, skidding and wheeling around. Now the rabbit bounds at her and she scrambles backwards, bouncing stiff-legged on all four paws, then springs into another bow. The camera stays level with her shoulder, never dropping below or swinging behind her.
+
+      overall_soundscape: Open woodland ambience throughout - wind in pines and steady birdsong. Fast paws thud on soft turf, dry grass and leaves tear and scatter, a hind foot thumps the ground twice, and a small dog pants hard with two short delighted play-barks and a bouncing collar tag.
+
+      non_diegetic_music: A bright plucked-strings and hand-percussion pattern at a quick tempo, skipping and playful, gaining a shaker layer on the second chase and holding an even bouncing dynamic throughout.
+
+  # -------------------------------------------------------------------------
+  # 4. The invitation, and the hesitation.
+  # -------------------------------------------------------------------------
+  # The hinge of the film: the moment she chooses to leave the safe lawn. The
+  # beat that has to land is the backward glance at the house, so the shot is
+  # written with the treeline and the house on opposite sides of frame.
+  - id: the-treeline
+    ref_images:
+      - bunny.jpg
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the wild European rabbit in <Picture 1> and <Picture 3>, small and rounded, with dense grey-brown agouti fur, a paler sandy face, long upright ears, a round black eye, and a short white-grey tail.
+      <Subject 2> is the small female French bulldog in <Picture 1> and <Picture 2>, compact and petite with a narrow finely-boned head, a slender neck, and a light delicate frame, with a short dark brindle coat that reads almost black, a white blaze covering the centre of her chest, large upright bat ears, wide round dark eyes, and a short deeply wrinkled muzzle.
+      <Subject 3> is the edge of the woodland in <Picture 1>, where the dry yellowed lawn ends against a dense green hedge, bramble, and the trunks of tall pines, with the ground beyond falling into shadow under an overcast sky.
+
+      summary:
+      [reference generation] The target video shows <Subject 1> breaking off the game and hopping toward the shadowed treeline of <Subject 3>, pausing at the gap to look back. <Subject 2> stops short on the open grass, glances back over her shoulder toward the house behind her, hesitates, then trots after the rabbit into the shade. <Picture 2> supplies her appearance and <Picture 3> the rabbit's.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the grey-brown agouti fur, pale sandy face, long upright ears, and short white-grey tail are retained.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - the near-black brindle coat, white chest blaze, large upright bat ears, round dark eyes, and short wrinkled muzzle are retained.
+      <Subject 3> (appears in [Shot 1]): fully_preserved - the dry yellowed grass, dense green hedge, bramble, and pine trunks are retained, with the shadowed ground beyond now visible.
+
+      detailed_description:
+      The target video is photorealistic live-action cinematic footage, cool and quiet, lit by flat grey overcast daylight that falls off sharply into the trees, with shallow depth of field and fine film grain.
+      [Shot 1] A low medium-wide shot places the shadowed treeline of <Subject 3> at frame right and the open lawn running back to the pale holiday house, soft and out of focus, at frame left. <Subject 1>, the grey-brown wild rabbit, breaks off mid-game and hops steadily toward a dark gap between the bramble and the pine trunks. It stops in the gap, turns its head back over its shoulder, and waits with both ears straight up. <Subject 2>, the small compact female French bulldog with the narrow finely-boned head, slender neck, white chest blaze, and large upright bat ears, comes after it at a trot, then plants all four paws and stops a few feet short of the shade. She is held in profile and three-quarter front view at shoulder height throughout. Her ears drop to half back. She turns her head to look behind her toward the house, holds it, then swings her muzzle front, ears rising again, and trots into the gap after the rabbit.
+
+      overall_soundscape: Woodland ambience throughout, thinning as the shot moves toward the trees - wind in high branches, dripping foliage, and birdsong receding into an echoing hush. Paws move from soft turf onto damp leaf litter, dry bramble scrapes fur, one uncertain whine breaks off short, and breathing quickens.
+
+      non_diegetic_music: The playful plucked-strings pattern from the chase falters and stops on her backward glance, replaced by a low sustained cello note and a single soft high bell as she steps into the shade, slow and hushed.
+
+  # -------------------------------------------------------------------------
+  # 5. Down the burrow.
+  # -------------------------------------------------------------------------
+  # The one shot that follows her from behind, because the draft asks for it.
+  # The framing is pinned deliberately: shoulder height, on her back, shoulders
+  # and ears, above her hips, never dropping lower. See the header note on why.
+  #
+  # This is also the darkest shot in the film. The bright opening ahead is what
+  # keeps it readable and sets up scene 6 holding the same viewpoint.
+  - id: the-burrow
+    ref_images:
+      - bunny.jpg
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the small female French bulldog in <Picture 1> and <Picture 2>, compact and petite with a narrow finely-boned head, a slender neck, and a light delicate frame, with a short dark brindle coat that reads almost black, a white blaze on her chest, large upright bat ears, and a short deeply wrinkled muzzle.
+      <Subject 2> is the wild European rabbit in <Picture 1> and <Picture 3>, small and rounded, with dense grey-brown agouti fur, long upright ears, and a short white-grey tail.
+      <Subject 3> is the woodland of <Picture 1>, damp leaf litter, exposed roots, bramble, and pine trunks under a closed canopy.
+
+      summary:
+      [reference generation] The target video follows close behind <Subject 1> as she pushes after <Subject 2> into a low tunnel of arched roots and bramble in <Subject 3>. The tunnel is dark and tight, but a bright opening is visible at the far end and grows as they go, until the path ahead reads as clearly opening out. <Picture 2> supplies her appearance and <Picture 3> the rabbit's.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the near-black brindle coat, large upright bat ears, and short wrinkled muzzle are retained, seen from behind and above at shoulder height.
+      <Subject 2> (appears in [Shot 1]): partially_preserved - the grey-brown agouti fur, long upright ears, and short white-grey tail are retained, mostly seen as a pale tail and hindquarters bounding ahead in low light.
+      <Subject 3> (appears in [Shot 1]): fully_preserved - the damp leaf litter, exposed roots, bramble, and pine trunks are retained, now closed overhead into a tunnel.
+
+      detailed_description:
+      The target video is photorealistic live-action cinematic footage, dim and cool, lit only by the daylight leaking through the canopy and a bright opening ahead, with shallow depth of field, deep shadow, and fine film grain.
+      [Shot 1] The camera follows <Subject 1> from behind at her own shoulder height, framed on her back, shoulders, and large upright bat ears, holding her hindquarters below the bottom of frame and never dropping lower or tilting down. It moves forward with her at a steady trot with a light handheld sway. The path narrows into a low tunnel through <Subject 3>, arched roots and bramble closing overhead, damp leaf litter underfoot, the walls of packed earth and pale root ends sliding past close on both sides. The light drops until she is almost a silhouette, her brindle coat catching only edges. Ahead of her, the grey-brown hindquarters and pale short tail of <Subject 2> bound in and out of the dark. Beyond them, a small bright opening burns at the end of the tunnel, and it grows steadily through the shot until warm light spills back down the walls, the roots thin out, and the ground ahead reads as clearly widening.
+
+      overall_soundscape: The open woodland ambience closes off into a tight muffled underground room tone with a slow drip of water and a faint low earth rumble. Paws scuff and skid on wet leaf litter, claws scrabble on root wood, bramble drags along fur, and a flat-faced dog snorts and pants hard in a confined space with the sound reflecting close. Faint birdsong grows ahead as the opening nears.
+
+      non_diegetic_music: A low sustained drone with a slow pulsing heartbeat under it, tense and close, gradually admitting a rising warm string line as the light ahead grows, unresolved at the end of the shot.
+
+  # -------------------------------------------------------------------------
+  # 6. The tea party.
+  # -------------------------------------------------------------------------
+  # Holds the viewpoint of scene 5 - emerging from the tunnel - so the chained
+  # frame is a genuine composition anchor here and the description says so.
+  # The most detailed set in the film (table, three rabbits, china, pastries,
+  # two empty chairs), which is what the extra frames buy.
+  #
+  # <Picture 4> is weak_reference ONLY. See the header note: it is a Victorian
+  # engraving and this film is photoreal. It supplies staging, not style.
+  - id: the-tea-party
+    video_frames: 100         # ~4.17s - a whole set has to be read
+    ref_images:
+      - bunny.jpg
+      - alice-in-wonderland.jpg
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the small female French bulldog in <Picture 1> and <Picture 2>, compact and petite with a narrow finely-boned head, a slender neck, and a light delicate frame, with a short dark brindle coat that reads almost black, a white blaze on her chest, large upright bat ears, wide round dark eyes, and a short deeply wrinkled muzzle.
+      <Subject 2> is the wild European rabbit in <Picture 1> and <Picture 3>, small and rounded, with dense grey-brown agouti fur, a paler sandy face, and long upright ears.
+      <Subject 3> is the staging of the outdoor tea party in <Picture 4> - a long table under a floor-length white cloth, mismatched gold-rimmed china cups on saucers, a large round teapot, tall high-backed chairs set outdoors among trees, and a rabbit seated at the table upright in a human-like pose.
+      <Subject 4> is the sunlit woodland clearing the tunnel opens into, ringed by tall trunks, floored with soft moss and grass, with low golden light slanting through the canopy.
+
+      summary:
+      [reference generation] The target video keeps the viewpoint of <Picture 1>, emerging from the dark tunnel behind <Subject 1> into <Subject 4>, where a tea party staged after <Subject 3> is already in progress. Three wild rabbits sit upright in high-backed chairs sipping tea and eating small pastries; two chairs stand empty. <Subject 2> hops ahead toward the table and <Subject 1> stops at the edge, staring.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the near-black brindle coat, white chest blaze, large upright bat ears, and short wrinkled muzzle are retained.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - the grey-brown agouti fur, pale sandy face, and long upright ears are retained.
+      <Subject 3> (appears in [Shot 1]): weak_reference - only the staging is carried over: the long white cloth, the mismatched gold-rimmed china, the tall high-backed chairs standing outdoors among trees, and the upright human-like seated posture of the rabbits. The engraved line, flat hand-coloured tint, and human characters of the source are not carried over; everything is rendered as photorealistic live action.
+      <Subject 4> (appears in [Shot 1]): fully_preserved - the tunnel mouth, ringing trunks, mossy floor, and slanted golden light are retained from the opening the previous shot was moving toward.
+      <Picture 1> ([Shot 1] composition anchor): fully_preserved - the following viewpoint behind <Subject 1> and her position in frame are held across the cut into the clearing.
+
+      detailed_description:
+      The target video is photorealistic live-action cinematic footage with a warm dreamlike cast, low golden light slanting through a canopy, floating dust and pollen, shallow depth of field, and fine film grain.
+      [Shot 1] The shot continues from the framing of <Picture 1>, still behind <Subject 1> at her shoulder height, her back, shoulders, and large upright bat ears filling the lower frame and her hindquarters held below its edge. She pushes out of the root tunnel into <Subject 4> and the light floods in. The camera keeps moving forward, then rises and arcs slowly around to her side until she is held in three-quarter front view. Ahead, in the middle of the mossy clearing, stands a long table draped to the grass in white cloth and crowded with mismatched gold-rimmed china cups, saucers, a large round teapot, and tiered stands of small iced pastries. Three wild rabbits with grey-brown agouti fur sit upright in tall high-backed chairs in human-like poses, backs straight, front paws lifted to cups, sipping and nibbling and taking no notice of her. Two chairs stand empty. <Subject 2> hops past her toward the table. She stops dead at the clearing's edge, ears at full upright, mouth slightly open.
+
+      overall_soundscape: The tight tunnel acoustic opens abruptly into a wide airy clearing with soft birdsong, a light breeze in high leaves, and a faint hum of insects. Fine china chinks against saucers, tea pours and is sipped, pastry crumbles, chair legs creak on soft ground, and one small dog stops panting mid-breath.
+
+      non_diegetic_music: The tense drone resolves the instant the light arrives into a warm sweeping string chord with a bright celesta figure over it, gentle and wondering, settling into a slow waltz lilt of plucked strings and a soft glockenspiel.
+
+  # -------------------------------------------------------------------------
+  # 7. Everyone at the table.
+  # -------------------------------------------------------------------------
+  # The widest shot in the film: five diners, all upright and human-posed. This
+  # is the scene that would gain the most from a landscape render - see the note
+  # in defaults. In portrait it is written end-on down the table so the far
+  # diners recede into frame rather than fighting for width.
+  - id: the-guests
+    video_frames: 100         # ~4.17s - five characters have to be read
+    ref_images:
+      - bunny.jpg
+      - alice-in-wonderland.jpg
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the small female French bulldog in <Picture 1> and <Picture 2>, compact and petite with a narrow finely-boned head, a slender neck, and a light delicate frame, with a short dark brindle coat that reads almost black, a white blaze covering the centre of her chest, large upright bat ears, wide round dark eyes, and a short deeply wrinkled muzzle.
+      <Subject 2> is the wild European rabbit in <Picture 1> and <Picture 3>, small and rounded, with dense grey-brown agouti fur, a paler sandy face, long upright ears, and a round black eye.
+      <Subject 3> is the tea-party setting established in <Picture 1> - the long white-clothed table, gold-rimmed china, large teapot, tiered pastry stands, and tall high-backed chairs standing on the moss of a sunlit woodland clearing.
+      <Subject 4> is the staging of the outdoor tea party in <Picture 4> - animals seated at a laid table in upright human-like poses, holding cups in their front paws.
+
+      summary:
+      [reference generation] The target video is a wide shot of the full table in <Subject 3> with every chair taken: the three resident rabbits, <Subject 2> now seated among them, and <Subject 1> in the last chair. All five sit upright in human-like poses, drinking tea, eating pastries, and laughing and chattering together. <Picture 2> supplies her appearance and <Picture 4> the seated staging.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the near-black brindle coat, white chest blaze, large upright bat ears, round dark eyes, and short wrinkled muzzle are retained.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - the grey-brown agouti fur, pale sandy face, and long upright ears are retained.
+      <Subject 3> (appears in [Shot 1]): fully_preserved - the white-clothed table, gold-rimmed china, teapot, tiered pastry stands, high-backed chairs, moss, and slanted golden light are retained, seen from a wider viewpoint with both empty chairs now filled.
+      <Subject 4> (appears in [Shot 1]): weak_reference - only the upright human-like seated posture and the cups held in front paws are carried over; the engraved line, flat hand-coloured tint, and human characters of the source are not, and everything is rendered as photorealistic live action.
+
+      detailed_description:
+      The target video is photorealistic live-action cinematic footage with a warm dreamlike cast, low golden light slanting through a canopy, floating dust and pollen, shallow depth of field, and fine film grain.
+      [Shot 1] A wide shot looks down the length of the table in <Subject 3> from its near end, the white cloth running away to the ringed trunks of the clearing, sunlight falling in bars across the china. Five diners sit in the tall high-backed chairs, all upright in human-like poses with their backs straight and their front paws working like hands. Three wild rabbits with grey-brown agouti fur are ranged down the far side, one pouring from the large round teapot, one lifting a gold-rimmed cup to its mouth, one holding a small iced pastry in both front paws. <Subject 2> sits among them with its long ears upright, turned in conversation. <Subject 1>, the small compact female French bulldog with the narrow finely-boned head, slender neck, white chest blaze, and large upright bat ears, sits nearest the camera in three-quarter front view, a cup and saucer in front of her, mouth open and tongue out in a wide open-mouthed dog laugh. Ears bob, heads tip together, and one rabbit thumps the table. The camera pushes in very slowly at small amplitude, holding chest height and never dropping below the tabletop.
+
+      overall_soundscape: Airy sunlit clearing ambience throughout, with soft birdsong and a light breeze in high leaves. Constant fine china chinking on saucers, tea pouring, pastry crumbling, chair legs creaking on moss, one paw thumping a table, and a warm overlapping chatter of small animal chirrs, squeaks, snuffles, and one delighted open-mouthed dog pant.
+
+      non_diegetic_music: A full warm chamber waltz - plucked strings, soft glockenspiel, a lilting clarinet line, and light brushed percussion at a gentle tempo, generous and slightly unreal, holding an even dynamic through the shot.
+
+  # -------------------------------------------------------------------------
+  # 8. Waking.
+  # -------------------------------------------------------------------------
+  # chain_from_previous: false - the hard cut out of the dream. See the header.
+  # Its refs are the anchor and the room, and it rhymes deliberately with scene
+  # 1: the same couch, the same curled pose, seen close instead of wide.
+  #
+  # The camera is on her face for the whole shot, so no framing constraint is
+  # needed here - there is no body in the frame to misread.
+  - id: waking
+    chain_from_previous: false
+    ref_images:
+      - centerparcs01.jpg
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the small female French bulldog in <Picture 1>, with a narrow finely-boned head and a slender neck, a short dark brindle coat that reads almost black, a white blaze on her chest, large upright bat ears, wide round dark eyes, a short deeply wrinkled muzzle, a flat black nose, and the pink tip of her tongue showing.
+      <Subject 2> is the holiday-house living room in <Picture 2>, with a dark teal-blue fabric couch carrying a long mustard-yellow bolster cushion, a pale grey wood-look laminate floor, beige curtains, and a wall of tall black-framed sliding glass doors looking out onto woodland under an overcast sky.
+
+      summary:
+      [reference generation] The target video cuts back indoors to <Subject 2> for a close shot on the face of <Subject 1>, asleep on the teal couch and plainly dreaming - paws twitching, eyes moving under the lids - until she jolts awake, eyes snapping open, head coming up fast, startled and breathing hard. <Picture 1> supplies her face in detail; <Picture 2> supplies the room and its light.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the near-black brindle coat, white chest blaze, large upright bat ears, round dark eyes, short wrinkled muzzle, and flat black nose are retained.
+      <Subject 2> (appears in [Shot 1]): partially_preserved - the dark teal couch, mustard-yellow bolster cushion, and grey daylight from the glass doors are retained; the wider room falls out of frame and out of focus behind her.
+
+      detailed_description:
+      The target video is photorealistic live-action cinematic footage, cool and quiet, lit by flat grey daylight from a wall of glass out of frame, with very shallow depth of field and fine film grain.
+      [Shot 1] A close shot fills the frame with the head and shoulders of <Subject 1>, the small female French bulldog with the narrow finely-boned head and slender neck, lying curled on the dark teal couch of <Subject 2>, her cheek against the mustard-yellow bolster cushion. Behind her the pale grey floor and the tall glass doors are soft and out of focus. The camera holds static and close. Her eyes are shut but moving fast beneath the lids. Her front paws twitch and paddle against the cushion, her whiskers jump, and her lips flutter with small muffled sounds. One ear rotates. Then she jolts - her whole body flinches, her eyes snap wide open, and her head comes up off the cushion fast, ears flaring to full upright. She stares straight past the camera, pupils wide, chest heaving, and blinks twice hard. The dream light is gone; the room is grey and ordinary.
+
+      overall_soundscape: Quiet empty-house room tone throughout, with rain ticking faintly on glass and muffled woodland outside. Small muffled sleeping woofs and whimpers, paws paddling against fabric, a sharp gasping inhale on the jolt, and fast shallow panting through a flat muzzle afterwards.
+
+      non_diegetic_music: The warm chamber waltz is heard for a moment as if from far away, then cuts off abruptly on the jolt, leaving a single low struck piano note ringing out under the room tone.
+
+  # -------------------------------------------------------------------------
+  # 9. Goodbye.
+  # -------------------------------------------------------------------------
+  # The scene the whole film turns on, so it gets all four refs: the chained
+  # frame for her startled face, centerparcs01 for the glass door she looks
+  # through, and the rabbit for what is on the other side of it.
+  #
+  # The wave is the load-bearing gesture. It is described concretely - one front
+  # paw lifted and rocked side to side - rather than as "waving", which the model
+  # is far more likely to render as a hop.
+  - id: goodbye
+    video_frames: 100         # ~4.17s - the turn, the wave, and the exit
+    ref_images:
+      - centerparcs01.jpg
+      - bunny.jpg
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the small female French bulldog in <Picture 1> and <Picture 2>, compact and petite with a narrow finely-boned head, a slender neck, and a light delicate frame, with a short dark brindle coat that reads almost black, a white blaze covering the centre of her chest, large upright bat ears, wide round dark eyes, and a short deeply wrinkled muzzle.
+      <Subject 2> is the holiday-house living room in <Picture 3>, with a dark teal-blue fabric couch carrying a mustard-yellow bolster cushion, a pale grey wood-look laminate floor, and a wall of tall black-framed sliding glass doors looking out onto a wet reddish-brown terrace, a white garden table, a closed dark parasol, and dense green woodland under an overcast sky.
+      <Subject 3> is the wild European rabbit in <Picture 4>, small and rounded, with dense grey-brown agouti fur, a paler sandy face, long upright ears with dark rims, a round black eye, and a short white-grey tail.
+
+      summary:
+      [reference generation] The target video continues from <Picture 1> as <Subject 1>, just woken, twists on the couch to look out through the glass doors of <Subject 2>. On the terrace outside sits <Subject 3>, upright and facing her. It lifts one front paw and rocks it slowly from side to side, then drops onto all fours and bounds away toward the trees. <Picture 2> supplies her appearance.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the near-black brindle coat, white chest blaze, large upright bat ears, round dark eyes, and short wrinkled muzzle are retained.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - the dark teal couch, mustard-yellow bolster, pale grey floor, black-framed glass doors, wet reddish-brown terrace, white garden table, closed parasol, and green woodland are retained.
+      <Subject 3> (appears in [Shot 1]): fully_preserved - the grey-brown agouti fur, pale sandy face, long upright ears, round black eye, and short white-grey tail are retained, seen through glass in soft grey daylight.
+      <Picture 1> ([Shot 1] opening frame): fully_preserved - her startled expression and position on the couch carry directly into the start of this shot.
+
+      detailed_description:
+      The target video is photorealistic live-action cinematic footage, cool and quiet, lit by flat grey daylight through a wall of glass, with shallow depth of field and fine film grain.
+      [Shot 1] The shot begins from the framing of <Picture 1>, close on <Subject 1>, the small compact female French bulldog with the narrow finely-boned head, slender neck, white chest blaze, and large upright bat ears, still wide-eyed and panting on the dark teal couch of <Subject 2>. Without hesitating she twists her body around toward the tall glass doors, front paws up on the couch arm, and the camera pulls back and arcs to her side at shoulder height, opening into a two-shot that holds her in three-quarter profile in the near frame and the wet terrace beyond the glass in the far. Sitting on the reddish-brown paving a few feet outside, facing straight in at her, is <Subject 3>, the grey-brown wild rabbit, upright on its haunches. It lifts one front paw clear of the ground, holds it at chest height, and rocks it slowly from side to side twice. Her ears go rigid. The rabbit drops onto all fours, turns, and bounds away across the dry grass toward the dark treeline, growing small and vanishing into the shade.
+
+      overall_soundscape: Quiet empty-house room tone throughout, with muffled rain, wind, and birdsong beyond the glass. Claws scrabble on couch fabric, a body thumps against the door frame, one flat muzzle snuffles hard against glass, and her panting stops abruptly. Everything outside stays soft and distant behind the pane.
+
+      non_diegetic_music: A single warm sustained string chord fades up as she turns and swells gently under the wave, joined by one clear high celesta note - the same colour as the tea-party score - thinning to a single held note as the rabbit reaches the trees.
+
+  # -------------------------------------------------------------------------
+  # 10. The smirk.
+  # -------------------------------------------------------------------------
+  # The button. The chained frame is the strongest reference in the film here -
+  # it is literally her own face one shot earlier - so <Picture 1> is a genuine
+  # composition anchor rather than an identity carrier, and the description says
+  # so. No room ref and no rabbit ref: nothing is in this shot but her face.
+  - id: the-smirk
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the small female French bulldog in <Picture 1> and <Picture 2>, with a narrow finely-boned head and a slender neck, a short dark brindle coat that reads almost black with faint lighter striping, a white blaze on her chest, large upright bat ears, wide round dark eyes, a short deeply wrinkled muzzle, a flat black nose, and the pink tip of her tongue showing.
+
+      summary:
+      [reference generation] The target video is a tight close-up on the face of <Subject 1> as she watches the rabbit go, turns to the camera, and settles into an unmistakably knowing, self-satisfied smirk, then lies back down on the couch cushion and closes her eyes. <Picture 1> supplies the framing and her position this shot begins from; <Picture 2> supplies her face in detail.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the near-black brindle coat, white chest blaze, large upright bat ears, round dark eyes, short wrinkled muzzle, flat black nose, and pink tongue tip are retained.
+      <Picture 1> ([Shot 1] opening frame): fully_preserved - the close framing, her position against the couch, and the grey daylight carry directly into the start of this shot.
+
+      detailed_description:
+      The target video is photorealistic live-action cinematic footage, cool and quiet, lit by flat grey daylight from a wall of glass out of frame, with very shallow depth of field and fine film grain.
+      [Shot 1] The shot begins from the framing of <Picture 1> and pushes in until the face of <Subject 1>, the small female French bulldog with the narrow finely-boned head and slender neck, fills the frame in three-quarter view, the teal couch and the pale blur of the glass doors soft behind her. The camera then holds completely static and close. She is still watching something past the edge of frame, ears at full upright, eyes bright and entirely awake. One ear flicks. Slowly she turns her wrinkled muzzle toward the camera until she is looking straight down the lens. Her gaze is level and knowing. One side of her mouth draws back and up, the loose skin creases along her muzzle, her lips part over her lower teeth, and the pink tip of her tongue shows at the corner - a distinctly smug, private, self-satisfied smile. She holds it, blinks once, very slowly. Then her ears fold back to rest, she lowers her head onto the mustard-yellow bolster cushion, settles her chin, and closes her eyes.
+
+      overall_soundscape: Quiet empty-house room tone throughout, with faint rain and distant birdsong beyond the glass. One ear flaps, a short snuffling breath passes through a flat muzzle, fur shifts against couch fabric, and her breathing slows and lengthens into sleep.
+
+      non_diegetic_music: A single mischievous plucked-string figure enters as her head turns, answered by one soft glockenspiel note on the smirk, then a warm sustained chord that fades slowly to silence as her eyes close.
