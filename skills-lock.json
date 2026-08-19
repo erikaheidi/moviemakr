@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "skills": {
+    "3d-animation-short-generator": {
+      "source": "MiniMax-AI/MiniMax-H3",
+      "sourceType": "github",
+      "skillPath": "skills/3d-animation-short-generator/SKILL.md",
+      "computedHash": "ee2eeee8a234924c4bf52e7f65970b1697fa1225e3610c69b23bfe6e537c6d4f"
+    },
+    "brand-promo-video-generator": {
+      "source": "MiniMax-AI/MiniMax-H3",
+      "sourceType": "github",
+      "skillPath": "skills/brand-promo-video-generator/SKILL.md",
+      "computedHash": "38b33f487ce8264f51a648861991eb0b07dac15f2e208ffb66146286ff5d5d0c"
+    },
+    "co-op-game-intro-generator": {
+      "source": "MiniMax-AI/MiniMax-H3",
+      "sourceType": "github",
+      "skillPath": "skills/co-op-game-intro-generator/SKILL.md",
+      "computedHash": "d57dd7c53f27140d383427a9d28bad044bbaf5af5958a3229eae9ce6c26d3293"
+    },
+    "h3-prompt-writing": {
+      "source": "MiniMax-AI/MiniMax-H3",
+      "sourceType": "github",
+      "skillPath": "skills/h3-prompt-writing/SKILL.md",
+      "computedHash": "77d059b596e34c1139b859bac30fe5049735bdf49acb70cd63ad8f4e7e329f3c"
+    },
+    "handdrawn-live-video-generator": {
+      "source": "MiniMax-AI/MiniMax-H3",
+      "sourceType": "github",
+      "skillPath": "skills/handdrawn-live-video-generator/SKILL.md",
+      "computedHash": "88b9bf17219f7294a8410d376c5c9ad1cf40a546b33b05401263ba067e7c36ed"
+    },
+    "minimalist-product-ad-generator": {
+      "source": "MiniMax-AI/MiniMax-H3",
+      "sourceType": "github",
+      "skillPath": "skills/minimalist-product-ad-generator/SKILL.md",
+      "computedHash": "120985cca194923c9127a59f448db2b685ea5cfd6aa1c91ed758822dd8191950"
+    },
+    "music-video-subtitle-generator": {
+      "source": "MiniMax-AI/MiniMax-H3",
+      "sourceType": "github",
+      "skillPath": "skills/music-video-subtitle-generator/SKILL.md",
+      "computedHash": "5a394951decd363080e3db8c4173700b9468760d07a279f81abd32a44f95a906"
+    },
+    "paper-collage-explainer-generator": {
+      "source": "MiniMax-AI/MiniMax-H3",
+      "sourceType": "github",
+      "skillPath": "skills/paper-collage-explainer-generator/SKILL.md",
+      "computedHash": "a9758f308a1f24794203a126977930a8274d5bc858b2d0dc55cb922c8090dbb1"
+    },
+    "papercraft-stop-motion-explainer": {
+      "source": "MiniMax-AI/MiniMax-H3",
+      "sourceType": "github",
+      "skillPath": "skills/papercraft-stop-motion-explainer/SKILL.md",
+      "computedHash": "2c2178104793c699c3850d825a7b1ca582b382d05f024483176ba12c263fa048"
+    }
+  }
+}

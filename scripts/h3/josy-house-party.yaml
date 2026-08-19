@@ -1,0 +1,451 @@
+# josy-house-party - a ten-scene short: the dog throws a party while the human
+# is out, and very nearly gets away with it.
+#
+#   ./moviemakr.py render scripts/h3/josy-house-party.yaml --dry-run
+#   ./moviemakr.py render scripts/h3/josy-house-party.yaml --only 1
+#   ./moviemakr.py render scripts/h3/josy-house-party.yaml
+#   ./moviemakr.py status scripts/h3/josy-house-party.yaml
+#
+# Prompts are written through the `h3-prompt-writing` skill in full-reference
+# (Ref2VA) form - see .claude/skills/h3-prompt-writing/references/ref-en.txt.
+# The same two adaptations as scripts/h3/cats-cooking-h3.yaml apply, because
+# moviemakr generates one shot per docker run rather than a whole movie:
+#
+#   1. Every scene is a single [Shot 1] with no cut timestamp. The cuts in this
+#      story happen between docker runs, not inside them.
+#   2. detailed_description runs ~130-170 words, not the guide's 350-500. That
+#      range is for a full multi-shot video; the guide's own rule is to spread
+#      detail by information load, and one ~4-second shot carries far less.
+#
+# ---------------------------------------------------------------------------
+# THE <Picture N> CONTRACT - read before editing any prompt
+# ---------------------------------------------------------------------------
+# Refs reach sd-cli as: chained previous frame first (render() inserts it at
+# index 0), then continuity.anchors in order, then any scene ref_images.
+# With two anchors and chaining on, that fixes the labels for the whole file:
+#
+#   scene 1 (chain_from_previous: false, 2 refs):
+#     <Picture 1> = assets/josy.jpg
+#     <Picture 2> = assets/josy_with_bunny.jpg
+#
+#   scenes 2-10 (chained, 3 refs):
+#     <Picture 1> = the previous scene's last frame
+#     <Picture 2> = assets/josy.jpg
+#     <Picture 3> = assets/josy_with_bunny.jpg
+#
+# If you turn chaining off on a scene, every label in it shifts down by one.
+#
+# <Subject N> numbering is per scene, in order of first appearance, as the guide
+# specifies - a label that is defined but never used is a dangling label. So the
+# same dog is <Subject 1> in scene 1 and <Subject 2> in scene 5. That is
+# correct; each scene is an independent generation.
+#
+# ---------------------------------------------------------------------------
+# KEEPING HER FEMALE - don't drop these when editing
+# ---------------------------------------------------------------------------
+# The first take of scene 1 rendered a male dog, even though the description
+# said "she" and "her" a dozen times. Grammatical gender turns out to be weak
+# conditioning for this model, and a negative prompt is not available to fix it
+# (cfg_scale is 1.0, so CFG is off and the negative prompt is never evaluated).
+# Three things now carry it instead, in every scene where she is visible:
+#
+#   1. Build, not pronouns. "small, compact, petite, narrow finely-boned head,
+#      slender neck, light delicate frame" - male frenchies have broader,
+#      blockier skulls and thicker necks, and that dimorphism is something the
+#      model has actually learned. This appears in BOTH subject_definitions and
+#      at her first appearance in detailed_description, per the guide's rule
+#      about restating a subject's characteristics where it first appears.
+#   2. The camera is pinned off her rear. What read as male was anatomy exposed
+#      by framing: the first take swung behind her while she was up on her hind
+#      legs at the window. Every scene now states shoulder-height framing, front
+#      and three-quarter views, and no angle from behind or below. Scenes 1, 5,
+#      6, and 8 are the ones with poses that need it.
+#   3. Scene 1 has its own seed (see below) - re-rolling the noise is a cheaper
+#      lever than more words.
+#
+# Scene 2 is a paw close-up only, so it gets the label and a smaller paw but no
+# framing constraint; there is no body in shot.
+name: josy-house-party
+
+model:
+  root: /home/erika/Projects/ai-models
+  diffusion_model: minimax-h3/minimax_h3_ref2va_pruned-Q8_0.gguf
+  llm:             minimax-h3/qwen3vl_32b_minimax_h3-Q4_K_M.gguf
+  vae:             minimax-h3/minimax_h3_video_vae_fp16.safetensors
+  audio_vae:       minimax-h3/minimax_h3_audio_vae_fp32.safetensors
+
+docker:
+  image: ghcr.io/leejet/stable-diffusion.cpp:master-vulkan
+  devices: [/dev/dri/card1, /dev/dri/renderD128, /dev/kfd]
+  run_as_current_user: true
+
+defaults:
+  width: 544
+  height: 960
+  fps: 24
+  # ~3.75s. sd-cli rounds this UP, and not by one or two: measured on this box at
+  # 544x960, 90 stays 90, 100 becomes 107, and 110 becomes 124. Check the
+  # "generate_video 544x960xN" line in the log for what you actually got. 107 is
+  # the largest count proven to render here - 124 DeviceLost'd three times out of
+  # three on scene 9 - so treat 100 as the ceiling for this script.
+  video_frames: 90
+  cfg_scale: 1.0
+  seed: 42
+  negative_prompt: ""       # no effect at cfg_scale 1.0 - CFG is off, so the
+                            # negative prompt is never evaluated. Steer with
+                            # positive description instead.
+  # MUST stay empty for H3-structured prompts. full_prompt() appends the suffix
+  # as ". <suffix>" at the very end - which here is the end of
+  # non_diegetic_music, so the style text would read as part of the score. The
+  # look lives in each scene's detailed_description opening line instead.
+  style_suffix: ""
+  extra_args: ["--diffusion-fa", "--mmap", "--backend", "te=cpu"]
+
+continuity:
+  # Two stills, passed to every scene. This is the character sheet that
+  # scripts/h3/cats-cooking-h3.yaml wished it had: several scenes here do not
+  # contain the main character at all (3, 4) or cut to a new room (8, 9), so
+  # last-frame chaining alone would lose her. The anchors hold her identity even
+  # when the chained frame has nothing to do with her.
+  #   josy.jpg            - full body on the parquet floor, and the only
+  #                         reference for the living room itself (gray couch,
+  #                         monstera, window) that scenes 4 and 9 need.
+  #   josy_with_bunny.jpg - her face and the pink bunny plush, on the gray couch.
+  anchors:
+    - josy.jpg
+    - josy_with_bunny.jpg
+
+  # Reference *videos* stay empty on purpose: on this box a --ref-video either
+  # crashes the GPU with DeviceLost or drags the whole pipeline onto the CPU.
+  # Reference images do not - chaining has always used them.
+  anchor_videos: []
+
+  chain_from_previous: true
+
+output:
+  container: mp4
+  audio: keep
+  music: null
+
+scenes:
+  # -------------------------------------------------------------------------
+  # 1. The human leaves.
+  # -------------------------------------------------------------------------
+  # The only scene with chain_from_previous: false, so it sees the two anchors
+  # and nothing else. It also has the most beats of any scene here (settle,
+  # react to the door, cross to the window), which is why it gets 100 frames.
+  - id: home-alone
+    chain_from_previous: false
+    video_frames: 100         # ~4.17s - three beats need the room
+    # Seed moved off the global 42: the first take at 42 rendered her male, and
+    # re-rolling the noise is a cheaper lever than more words. Revert to inherit
+    # 42 if this take is worse for other reasons.
+    seed: 1807
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the small female French bulldog in <Picture 1> and <Picture 2>, compact and petite with a narrow finely-boned head, a slender neck, and a light delicate frame, with a short dark brindle coat that reads almost black, faint lighter brindle striping along her flanks, a white blaze covering the centre of her chest, large upright bat ears, wide round dark eyes, a short wrinkled muzzle, and a flat black nose.
+      <Subject 2> is the well-loved pink plush bunny in <Picture 2>, with matted pale-pink fur, long floppy pink ears, a flat beige face with one large blue plastic eye, a small pink nose, and a worn beige belly patch.
+      <Subject 3> is the domestic living room in <Picture 1>, with a light honey-brown herringbone parquet floor, a low grey fabric couch, a large-leafed potted monstera, and a tall window with pale blinds.
+
+      summary:
+      [reference generation] The target video opens on <Subject 1> sitting on the grey couch in <Subject 3> with <Subject 2> beside her. A front door closes off-screen; she snaps to attention, hops down to the parquet floor, and rises against the window sill to watch her human go. <Picture 1> supplies her full-body appearance and the room; <Picture 2> supplies her face and the plush bunny.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the near-black brindle coat, white chest blaze, large upright bat ears, round dark eyes, and short wrinkled muzzle are retained.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - the matted pale-pink fur, long floppy ears, beige face with one large blue plastic eye, and worn beige belly patch are retained.
+      <Subject 3> (appears in [Shot 1]): fully_preserved - the herringbone parquet floor, low grey fabric couch, potted monstera, and window with pale blinds are retained.
+
+      detailed_description:
+      The target video is photorealistic live-action cinematic footage, warm and cosy, lit by soft daylight through a window, with shallow depth of field and fine film grain.
+      [Shot 1] A medium shot frames <Subject 1>, the small compact female French bulldog with the narrow finely-boned head, slender neck, white chest blaze, and large upright bat ears, sitting upright on the low grey couch in <Subject 3>. <Subject 2>, the matted pink plush bunny with one blue plastic eye, lies slumped against her front leg. She is calm, blinking slowly. A door latch clicks and a heavy front door closes somewhere off-screen behind the camera. Her ears snap forward and her head turns sharply toward the sound, eyes wide. The camera stays level with her shoulder for the whole shot, holding her in profile and three-quarter front view, and never moves behind her or below her. It pans right at slow speed and small amplitude as she scrambles off the couch, lands on the honey-brown herringbone parquet with a soft clatter of claws, and trots to the tall window. She rises onto her hind legs, plants both front paws on the window sill beside the potted monstera, and presses her wrinkled muzzle to the glass, ears angled forward, watching intently. She is framed from the side throughout this rise, her white chest blaze turned toward the camera and her flank filling the frame. Her stub tail gives one small wag.
+
+      overall_soundscape: Quiet indoor room tone throughout. A door latch clicks and a heavy front door thuds shut off-screen, followed by muffled footsteps receding outside. Claws clatter briefly on the parquet floor, fabric shifts on the couch, and a short snuffling breath fogs the window glass.
+
+      non_diegetic_music: A light plucked-ukulele and hand-percussion pattern at a moderate tempo, playful and quiet, holding an even dynamic and thinning to a single sustained note as she reaches the window.
+
+  # -------------------------------------------------------------------------
+  # 2. She sends the message.
+  # -------------------------------------------------------------------------
+  # Only her paw is in frame, so the anchors are partially_preserved (the coat
+  # and paw, not the whole dog) rather than fully_preserved - claiming the whole
+  # dog is retained in a shot that shows one leg is the kind of over-claim the
+  # retention step exists to catch.
+  #
+  # The app is described by its appearance (green header, stacked chat bubbles)
+  # rather than named. The model renders the look either way, and legible brand
+  # marks are not something it can be trusted to draw correctly.
+  - id: the-text
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the small female French bulldog established in <Picture 1>, <Picture 2>, and <Picture 3>, with a short dark brindle coat, a white chest blaze, and small neat dark front paws with pale claws.
+      <Subject 2> is the domestic interior in <Picture 1> and <Picture 2>, with its light honey-brown herringbone parquet floor and soft daylight.
+
+      summary:
+      [reference generation] The target video is a tight close-up of a chunky pastel toy smartphone lying on the parquet floor while one dark front paw of <Subject 1> taps out a group-chat message. The screen shows a stacked green chat thread and a new bubble containing a party-hat icon and a question mark. <Picture 2> and <Picture 3> supply the paw's coat and colour; <Picture 1> supplies the floor and the lighting continuing from the previous shot.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): partially_preserved - only the front paw and lower foreleg are in frame; the near-black brindle coat, stocky paw shape, and pale claws are retained, and the rest of the dog is out of frame.
+      <Subject 2> (appears in [Shot 1]): partially_preserved - the honey-brown herringbone parquet and soft daylight are retained, seen from a much closer, lower viewpoint.
+
+      detailed_description:
+      The target video is photorealistic live-action cinematic footage, warm and cosy, with soft daylight, very shallow depth of field, and fine film grain.
+      [Shot 1] An extreme close-up looks down at a chunky pastel-blue toy smartphone with oversized rounded corners lying face up on the honey-brown herringbone parquet of <Subject 2>. The screen glows, showing a group-chat thread with a green header bar and a column of small rounded chat bubbles above an empty text field. From the left edge of frame, the small neat dark front paw of <Subject 1> enters, its near-black brindle fur and pale claws catching the daylight, and settles beside the screen. The camera holds a static shot as the paw presses the glass twice with soft deliberate taps. A new green chat bubble slides up from the bottom of the thread carrying a small colourful party-hat icon followed by a question mark. The screen brightens for a moment as the message sends. The paw lifts, hovers, and the toes spread slightly.
+
+      overall_soundscape: Quiet indoor room tone throughout. Two soft padded taps on glass, the faint scrape of a claw across the screen, a short bright electronic send chime, and a low sniff just off-microphone.
+
+      non_diegetic_music: A sparse plucked-ukulele figure with a single hand-clap accent landing on the send chime, quiet and playful, then dropping to near silence.
+
+  # -------------------------------------------------------------------------
+  # 3. The group chat answers.
+  # -------------------------------------------------------------------------
+  # The main character is not in this scene, but the anchors are still passed to
+  # every scene - so they are given an honest job (scale, lighting, treatment)
+  # rather than left unmentioned, which would invite the model to drop a
+  # frenchie into one of the squares.
+  #
+  # The four guests are pinned by breed and colour here and re-stated in full in
+  # scenes 4, 6, 7, and 8. The chained frame carries them from shot to shot, but
+  # text is what holds them when the chain runs through a shot they are not in.
+  - id: the-replies
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the glowing toy-phone screen and group-chat thread in <Picture 1>, with its green header bar and stacked rounded chat bubbles.
+      <Subject 2> is the warm domestic look of <Picture 2> and <Picture 3> - small-dog scale, soft indoor daylight, shallow depth of field, and fine film grain.
+
+      summary:
+      [reference generation] The target video is a four-way split screen, two squares across and two down, each square holding a different small dog in its own home reacting to the group-chat message from <Subject 1> with obvious satisfaction and nodding agreement. <Picture 1> supplies the message and the screen glow that opens the shot; <Picture 2> and <Picture 3> supply only the scale, lighting, and camera treatment.
+
+      retention_analysis:
+      <Subject 1> ([Shot 1] opening frame): partially_preserved - the green chat thread and screen glow are retained at the start of the shot before the frame divides into four panels.
+      <Subject 2> (appears in [Shot 1]): weak_reference - only the small-dog scale, warm indoor daylight, shallow depth of field, and film-grain treatment are carried over; the subjects, rooms, and framing are all new.
+
+      detailed_description:
+      The target video is photorealistic live-action cinematic footage, warm and cosy, with soft indoor daylight, shallow depth of field, and fine film grain matching <Subject 2>.
+      [Shot 1] The glow of <Subject 1> fills the frame for a moment, then the image divides into a four-way split screen, two panels across and two down, each separated by a thin white line. Top left: a small fluffy white Maltese with long silky fur and a topknot sits on a beige armchair, ears lifting as it nods twice in firm agreement. Top right: a tan-and-white Jack Russell terrier with a brown patch over one eye stands on a kitchen chair, jaw dropping open into a delighted grin, then nodding hard. Bottom left: a long-bodied chestnut dachshund with glossy short fur and long drooping ears lies on a striped rug, lifting its head and nodding slowly with heavy-lidded satisfaction. Bottom right: a fawn pug with a black mask muzzle and a tightly curled tail sits on a windowsill, eyes bulging with excitement as it nods rapidly. All four panels hold static framing. Each dog's face is lit by the small blue glow of a screen just off frame.
+
+      overall_soundscape: Four layers of quiet indoor room tone overlap. A short bright notification chime opens the shot, followed by collar tags jingling as heads nod, one sharp excited yip, a low pleased grumble, and the rapid snuffling breaths of a flat-faced dog.
+
+      non_diegetic_music: A bright plucked-ukulele and hand-clap pattern at a brisk tempo, building one small layer of shaker with each panel as it fills in, holding an even dynamic to the end.
+
+  # -------------------------------------------------------------------------
+  # 4. The guests arrive.
+  # -------------------------------------------------------------------------
+  # The best-anchored shot in the film: <Picture 1> carries the four guests
+  # straight out of scene 3, and <Picture 2> is the only real reference for the
+  # living room they are wrecking. The main character stays out of frame here so
+  # her entrance in scene 5 lands.
+  #
+  # The party track is audience-only at this point - there is no speaker in the
+  # room until the boombox arrives in scene 5 - so it belongs in
+  # non_diegetic_music, not overall_soundscape.
+  - id: the-party
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the fluffy white Maltese with long silky fur and a topknot in <Picture 1>.
+      <Subject 2> is the tan-and-white Jack Russell terrier with a brown patch over one eye in <Picture 1>.
+      <Subject 3> is the long-bodied chestnut dachshund with glossy short fur and long drooping ears in <Picture 1>.
+      <Subject 4> is the fawn pug with a black mask muzzle and a tightly curled tail in <Picture 1>.
+      <Subject 5> is the domestic living room in <Picture 2>, with a light honey-brown herringbone parquet floor, a low grey fabric couch, a large-leafed potted monstera, and a tall window with pale blinds.
+
+      summary:
+      [reference generation] The target video shows <Subject 1>, <Subject 2>, <Subject 3>, and <Subject 4> together on the parquet floor of <Subject 5>, playing and tumbling happily with the grey couch behind them. <Picture 1> supplies the four dogs; <Picture 2> supplies the room, the floor, and the couch.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the long silky white fur and topknot are retained.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - the tan-and-white coat and the brown patch over one eye are retained.
+      <Subject 3> (appears in [Shot 1]): fully_preserved - the long body, glossy chestnut fur, and long drooping ears are retained.
+      <Subject 4> (appears in [Shot 1]): fully_preserved - the fawn coat, black mask muzzle, and tightly curled tail are retained.
+      <Subject 5> (appears in [Shot 1]): fully_preserved - the herringbone parquet floor, low grey fabric couch, potted monstera, and window with pale blinds are retained; the four dogs are new to the room.
+
+      detailed_description:
+      The target video is photorealistic live-action cinematic footage, warm and cosy, lit by soft daylight through a window, with shallow depth of field and fine film grain.
+      [Shot 1] A low wide shot looks across the honey-brown herringbone parquet of <Subject 5>, the low grey fabric couch filling the background and the potted monstera standing at frame right. Four small dogs play together in the open floor space. <Subject 2>, the tan-and-white Jack Russell, bounces in a play bow with its chest down and rear up, then springs sideways. <Subject 1>, the white Maltese, chases after it in a tight circle, silky fur bouncing. <Subject 3>, the chestnut dachshund, wriggles onto its back and kicks its short legs in the air. <Subject 4>, the fawn pug, charges through the middle of the group, curled tail wagging, and skids on the polished parquet. The camera holds a slow handheld drift with small amplitude. Loose tufts of stuffing and an overturned cushion lie scattered near the couch.
+
+      overall_soundscape: Warm indoor room tone throughout. Claws scrabble and skid on polished wood, dogs pant heavily, two play-growls and a short yip overlap, and a cushion thuds softly onto the floor.
+
+      non_diegetic_music: An upbeat party track audible only to the audience - bright synth-brass stabs, a four-on-the-floor kick, hand claps on the offbeat, and a shaker pattern at a fast tempo, rising steadily in energy through the shot.
+
+  # -------------------------------------------------------------------------
+  # 5. She starts the music.
+  # -------------------------------------------------------------------------
+  # Her entrance, and the first time all three refs point the same way: the
+  # chained frame has the room and the guests, and both anchors have her.
+  - id: the-boombox
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the small female French bulldog in <Picture 2> and <Picture 3>, compact and petite with a narrow finely-boned head, a slender neck, and a light delicate frame, with a short dark brindle coat, a white blaze covering the centre of her chest, large upright bat ears, wide round dark eyes, and a short wrinkled muzzle.
+      <Subject 2> is the domestic living room in <Picture 1> and <Picture 2>, with a light honey-brown herringbone parquet floor, a low grey fabric couch, and a large-leafed potted monstera.
+
+      summary:
+      [reference generation] The target video shows <Subject 1> carrying a chunky retro boombox into <Subject 2>, setting it down on the parquet floor, and pressing a button on its front panel with one front paw to start a new track. <Picture 2> and <Picture 3> supply her appearance; <Picture 1> supplies the room and the party already in progress.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the near-black brindle coat, white chest blaze, large upright bat ears, round dark eyes, and short wrinkled muzzle are retained.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - the herringbone parquet floor, low grey fabric couch, and potted monstera are retained.
+
+      detailed_description:
+      The target video is photorealistic live-action cinematic footage, warm and cosy, lit by soft daylight, with shallow depth of field and fine film grain.
+      [Shot 1] A shot at chest height, level with the couch cushions, frames the honey-brown herringbone parquet of <Subject 2> with the low grey couch behind. <Subject 1>, the small compact female French bulldog with the narrow finely-boned head, slender neck, white chest blaze, and large upright bat ears, backs into frame from the left dragging a chunky retro boombox with a silver handle, two large round speakers, and a row of coloured buttons across its front panel. She braces her legs and shoves it into the centre of the floor, where it settles with a solid knock against the wood. She circles it once, ears pricked, then sits down on the parquet, lifts one dark front paw, and presses a square button on the front panel. The speakers thump once and the cones flex visibly as a new track starts. Her ears flick back at the volume and her whole body begins to bob in time. The camera holds her in profile and three-quarter front view, keeping her white chest blaze toward the lens, and pushes in slowly with small amplitude without dropping below her eye level.
+
+      overall_soundscape: Warm indoor room tone with the other dogs panting and scrabbling just off frame. The boombox scrapes across the parquet and knocks down solidly, a plastic button clicks under a paw, and the speakers thump once. A bright Latin-pop dance track then plays aloud from the boombox in the room - syncopated brass hook, hand claps, shaker, and a steady four-on-the-floor beat at about 105 beats per minute, slightly boxy and mid-heavy as it would sound through small speakers.
+
+      non_diegetic_music: N/A - all music in this shot comes from the boombox on the floor and is audible to the dogs.
+
+  # -------------------------------------------------------------------------
+  # 6. The dance.
+  # -------------------------------------------------------------------------
+  # Five dogs, bipedal, in sync - the most complex framing in the film, which is
+  # why it gets the extra frames. The guests are re-stated in full because the
+  # chained frame from scene 5 pushes in on the boombox and may not hold all
+  # four of them clearly.
+  - id: the-dance
+    video_frames: 100         # ~4.17s - a choreographed beat needs the room
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the small female French bulldog in <Picture 1>, <Picture 2>, and <Picture 3>, compact and petite with a narrow finely-boned head, a slender neck, and a light delicate frame, with a short dark brindle coat, a white blaze covering the centre of her chest, large upright bat ears, and a short wrinkled muzzle.
+      <Subject 2> is the domestic living room in <Picture 1> and <Picture 2>, with a light honey-brown herringbone parquet floor, a low grey fabric couch, and the retro boombox standing on the floor.
+
+      summary:
+      [reference generation] The target video shows <Subject 1> and her four guests - a white Maltese, a tan-and-white Jack Russell, a chestnut dachshund, and a fawn pug - standing upright on their hind legs in a human-like posture across the floor of <Subject 2>, performing a synchronised line dance to the track playing from the boombox. <Picture 1> supplies the room and the boombox; <Picture 2> and <Picture 3> supply <Subject 1>'s appearance.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the near-black brindle coat, white chest blaze, large upright bat ears, and short wrinkled muzzle are retained.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - the herringbone parquet floor, low grey fabric couch, and the retro boombox on the floor are retained, seen from a wider viewpoint.
+
+      detailed_description:
+      The target video is photorealistic live-action cinematic footage, warm and cosy, lit by soft daylight, with shallow depth of field and fine film grain.
+      [Shot 1] A wide full-body shot looks straight across the honey-brown herringbone parquet of <Subject 2>, the low grey couch behind and the retro boombox standing at frame left with its speaker cones flexing. Five small dogs stand in a loose row, all balanced upright on their hind legs in a human-like posture, hind paws flat on the floor, backs straight, front paws held up at chest height like arms. <Subject 1>, the small compact female French bulldog with the narrow finely-boned head, slender neck, and white chest blaze, stands at the centre, noticeably the smallest and lightest-framed of the five. Beside her, in order, are the fluffy white Maltese with a topknot, the tan-and-white Jack Russell with a brown patch over one eye, the long chestnut dachshund, and the fawn pug with its black mask muzzle. All five perform the same choreography in time with the beat: both front paws thrust forward, then crossed over the chest, then placed behind the head, followed by a hip swivel and a quarter turn to the left. Ears bounce and tongues loll. The camera holds a static wide shot from directly in front of the row at chest height, so all five are seen face-on with their chests toward the lens, never from behind or from a low upward angle.
+
+      overall_soundscape: Warm indoor room tone underneath. The bright Latin-pop dance track continues aloud from the boombox in the room - syncopated brass hook, hand claps, shaker, and a steady four-on-the-floor beat at about 105 beats per minute, boxy and mid-heavy through the small speakers. Hind paws thump the parquet in unison on the beat, collar tags jingle, and five dogs pant hard between moves.
+
+      non_diegetic_music: N/A - all music in this shot comes from the boombox on the floor and is audible to the dogs.
+
+  # -------------------------------------------------------------------------
+  # 7. The lookout.
+  # -------------------------------------------------------------------------
+  # The Jack Russell gets this beat - the most alert silhouette of the four, and
+  # the easiest to read at speed. The turn from window to camera is the whole
+  # shot, so the dance is left in the background rather than re-described.
+  - id: the-lookout
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the tan-and-white Jack Russell terrier with a brown patch over one eye, established in <Picture 1>.
+      <Subject 2> is the domestic living room in <Picture 1> and <Picture 2>, with a light honey-brown herringbone parquet floor, a low grey fabric couch, and a tall window with pale blinds.
+
+      summary:
+      [reference generation] The target video shows <Subject 1> breaking away from the dancing to look out of the tall window in <Subject 2>, spotting the returning owner, and whipping its head back toward the camera with a look of open panic. <Picture 1> supplies the terrier and the party in progress; <Picture 2> supplies the room and the window.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the tan-and-white coat and the brown patch over one eye are retained.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - the herringbone parquet floor, low grey fabric couch, and tall window with pale blinds are retained.
+
+      detailed_description:
+      The target video is photorealistic live-action cinematic footage, warm and cosy, with shallow depth of field and fine film grain.
+      [Shot 1] A medium shot frames the tall window of <Subject 2> at frame right, pale blinds half raised and daylight pouring through. <Subject 1>, the tan-and-white Jack Russell terrier with the brown patch over one eye, stands on its hind legs with both front paws braced on the window sill, muzzle pressed to the glass, looking out and down. Behind it, softly out of focus, other small dogs continue bouncing on the parquet. Its body goes rigid. Its ears drop flat against its skull and its tail tucks. The camera pushes in at slow speed with small amplitude as the terrier whips its head around toward the camera, eyes stretched wide with the whites showing, mouth hanging open in alarm. It drops off the sill onto all four paws, front legs splayed, and takes one urgent step forward, head low, still staring straight down the lens. Behind it the movement in the background falters and stops.
+
+      overall_soundscape: Warm indoor room tone with the boombox track still playing aloud in the room, now feeling too loud. A car door thuds shut faintly outside the glass and keys jingle at a distance. Claws scrabble on the sill, one sharp panicked yelp cuts through, and the panting behind falls abruptly silent.
+
+      non_diegetic_music: A single sustained low string note rises underneath from the moment the terrier freezes, swelling steadily in volume to the end of the shot.
+
+  # -------------------------------------------------------------------------
+  # 8. The escape.
+  # -------------------------------------------------------------------------
+  # A new room, so the chained frame can only be a weak_reference for the look -
+  # labelling it honestly is what stops the prompt from asking for a living room
+  # it has just left. The anchors are what carry the main character across the
+  # cut. Extra frames because four dogs have to clear the window.
+  - id: the-escape
+    video_frames: 100         # ~4.17s - four exits in quick succession
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the small female French bulldog in <Picture 2> and <Picture 3>, compact and petite with a narrow finely-boned head, a slender neck, and a light delicate frame, with a short dark brindle coat, a white blaze covering the centre of her chest, large upright bat ears, and a short wrinkled muzzle.
+      <Subject 2> is the warm domestic look of <Picture 1> - light wooden flooring, soft daylight, shallow depth of field, and fine film grain.
+
+      summary:
+      [reference generation] The target video moves to a smaller back room with an open window where <Subject 1> urges her four guests out one after another. The white Maltese, the tan-and-white Jack Russell, the chestnut dachshund, and the fawn pug scramble up and vault through the opening in quick succession. <Picture 2> and <Picture 3> supply <Subject 1>'s appearance; <Picture 1> supplies only the lighting and colour treatment, since the room is new.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the near-black brindle coat, white chest blaze, large upright bat ears, and short wrinkled muzzle are retained.
+      <Subject 2> (appears in [Shot 1]): weak_reference - only the light wooden flooring, warm daylight, and film-grain treatment are carried over; the room, viewpoint, and staging are all new.
+
+      detailed_description:
+      The target video is photorealistic live-action cinematic footage matching <Subject 2>, warm and cosy, with shallow depth of field and fine film grain.
+      [Shot 1] A medium wide shot frames a small back room with the same light wooden flooring and a low window standing wide open at frame right, bright daylight and green foliage visible beyond the sill. <Subject 1>, the small compact female French bulldog with the narrow finely-boned head, slender neck, white chest blaze, and large upright bat ears, stands side-on beneath the window, front paws planted, head snapping between the open window and the doorway behind her. The camera stays level with her shoulder and holds her in profile and three-quarter front view throughout, never moving behind or below her. She barks twice, short and urgent, and jerks her muzzle toward the opening. The tan-and-white Jack Russell springs first, clearing the sill in one clean leap. The white Maltese scrambles up after it, silky fur catching on the frame, and tumbles out. The fawn pug takes a running start, scrabbles hard against the wall with its back paws, and is shoved over the sill by <Subject 1>'s flat muzzle. Last, the long chestnut dachshund wriggles up and drops through. The camera holds a loose handheld shot with small amplitude.
+
+      overall_soundscape: Muffled indoor room tone with faint traffic and birdsong coming through the open window. Two short urgent barks, claws raking wood, four separate scrambles and thumps over the sill, panting, and a soft grunt of effort. A key turns in a lock somewhere off-screen behind.
+
+      non_diegetic_music: A fast agitated pizzicato-strings figure with a driving low drum pulse at a brisk tempo, cutting to silence on the last dog's exit.
+
+  # -------------------------------------------------------------------------
+  # 9. The alibi.
+  # -------------------------------------------------------------------------
+  # First-person POV, so the owner is a voice and a viewpoint, never a face -
+  # generating a person here would only invite the model to render a stranger
+  # into a home movie. (Sx) is assigned for the off-screen speaker per the
+  # guide's rule for a voice with no corresponding <Subject N>.
+  #
+  # 100 frames, NOT 110. This scene is the one that DeviceLost'd on the first
+  # full run, three attempts out of three, and the logs pin why: sd-cli rounds
+  # video_frames up, and it does it in jumps. 90 stays 90, 100 becomes 107, but
+  # 110 becomes 124 - so asking for ten more frames actually asked for
+  # seventeen. Every attempt died immediately after the VAE weights finished
+  # loading (26 GB planned in VRAM), which is the step whose memory scales with
+  # frame count. 107 is proven on this box: scenes 1, 6, and 8 all rendered it.
+  #
+  # 100 -> 107 frames is 4.46s at 24fps, so the line still fits. The shot below
+  # is written to reach her face early and start the line by about the one-second
+  # mark rather than after a slow drift in, which is what buys it the room.
+  # <cutoff> is the guide's marker for speech the video end truncates; this
+  # scene is written not to need it. If the line does get clipped, trim it to
+  # "Good girl! You didn't throw any parties, right?" rather than raising frames.
+  - id: good-girl
+    video_frames: 100         # -> 107 actual, ~4.46s. Do not raise: 110 -> 124 = DeviceLost.
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the domestic living room in <Picture 2>, with a light honey-brown herringbone parquet floor, a low grey fabric couch, a large-leafed potted monstera, and a tall window with pale blinds.
+      <Subject 2> is the small female French bulldog in <Picture 2> and <Picture 3>, compact and petite with a narrow finely-boned head, a slender neck, and a light delicate frame, with a short dark brindle coat, a white blaze covering the centre of her chest, large upright bat ears, and a short wrinkled muzzle.
+      <Subject 3> is the well-loved pink plush bunny in <Picture 3>, with matted pale-pink fur, long floppy pink ears, a flat beige face with one large blue plastic eye, and a worn beige belly patch.
+
+      summary:
+      [reference generation] The target video is a first-person point-of-view shot from the returning owner, walking into <Subject 1> and finding <Subject 2> asleep on the grey couch with <Subject 3> tucked against her side, the room spotless. The owner speaks warmly from behind the camera and is never seen. <Picture 2> supplies the room and the dog; <Picture 3> supplies her face and the plush bunny.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the herringbone parquet floor, low grey fabric couch, potted monstera, and window with pale blinds are retained.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - the near-black brindle coat, white chest blaze, large upright bat ears, and short wrinkled muzzle are retained.
+      <Subject 3> (appears in [Shot 1]): fully_preserved - the matted pale-pink fur, long floppy ears, beige face with one large blue plastic eye, and worn beige belly patch are retained.
+
+      detailed_description:
+      The target video is photorealistic live-action cinematic footage shot as a first-person point of view, warm and cosy, lit by soft late-afternoon daylight, with shallow depth of field and fine film grain.
+      [Shot 1] The camera is the returning owner's own eyeline, already inside <Subject 1> and moving forward at walking pace with a gentle handheld sway. It turns left without pausing and settles immediately on the low grey couch, where <Subject 2>, the small compact female French bulldog with the narrow finely-boned head, slender neck, white chest blaze, and large upright bat ears, lies curled and fast asleep on a cushion, eyes shut, flanks rising and falling slowly, her front toward the camera and her legs tucked beneath her. A warm off-screen voice (S1), unhurried and affectionate, begins speaking almost at once, saying, <d>[English] Good girl! You didn't throw any parties while I was out, right?</d> While the voice speaks, the camera drifts slowly closer and the room reads clean behind her: the honey-brown herringbone parquet clear and spotless, the potted monstera upright, the pale blinds glowing with late daylight, nothing out of place. <Subject 3>, the matted pink plush bunny with one blue plastic eye, is tucked against her side beneath one front paw. As the line finishes, one of her bat ears rotates a fraction toward the sound; her eyes stay closed.
+
+      overall_soundscape: Quiet late-afternoon room tone throughout. A door clicks shut and keys drop onto a hard surface behind the camera, followed by unhurried footsteps on wood, the rustle of a coat, and the slow soft breathing of a sleeping dog.
+
+      non_diegetic_music: A calm sustained warm-pad chord with a single soft piano note, quiet and unresolved, holding under the whole shot.
+
+  # -------------------------------------------------------------------------
+  # 10. The smirk.
+  # -------------------------------------------------------------------------
+  # The button. The chained frame is the strongest reference in the film here -
+  # it is literally this dog's sleeping face one shot earlier - so this is the
+  # one scene where <Picture 1> is a genuine composition anchor rather than an
+  # identity carrier, and the description says so.
+  - id: the-smirk
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the small female French bulldog in <Picture 1>, <Picture 2>, and <Picture 3>, with a narrow finely-boned head and a slender neck, a short dark brindle coat, a white blaze covering the centre of her chest, large upright bat ears, wide round dark eyes, a short wrinkled muzzle, and a flat black nose.
+      <Subject 2> is the well-loved pink plush bunny in <Picture 1> and <Picture 3>, with matted pale-pink fur and long floppy pink ears.
+
+      summary:
+      [reference generation] The target video is a tight close-up on the head of <Subject 1>, who lifts it from the cushion as if just woken, turns toward the camera, and settles into an unmistakably smug, mischievous smile with <Subject 2> soft in the foreground. <Picture 1> supplies the sleeping pose and framing this shot begins from; <Picture 2> and <Picture 3> supply her face in detail.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the near-black brindle coat, white chest blaze, large upright bat ears, round dark eyes, short wrinkled muzzle, and flat black nose are retained.
+      <Subject 2> (appears in [Shot 1]): partially_preserved - the matted pale-pink fur and long floppy ears are retained, held soft and out of focus in the foreground.
+
+      detailed_description:
+      The target video is photorealistic live-action cinematic footage, warm and cosy, lit by soft late-afternoon daylight, with very shallow depth of field and fine film grain.
+      [Shot 1] The shot begins from the framing of <Picture 1>, a tight close-up on the head of <Subject 1>, the small female French bulldog with the narrow finely-boned head and slender neck, resting on a grey couch cushion with her eyes closed. <Subject 2>, the matted pink plush bunny, sits soft and out of focus across the bottom of the frame. The camera holds static and close. Her eyes open slowly. She lifts her head off the cushion, ears rising to full upright, and turns her wrinkled muzzle toward the camera until she is looking straight down the lens. Her gaze is level and entirely awake, with none of the blur of a dog that has just woken up. One side of her mouth draws back and up, her lips part over her lower teeth, and the loose skin around her muzzle creases into a distinctly smug, self-satisfied smile. Her eyebrows lift on one side. She holds the look, blinks once, slowly, and her stub tail thumps the cushion twice behind her.
+
+      overall_soundscape: Quiet late-afternoon room tone throughout. A short snuffling breath through a flat muzzle, the soft shift of fur against couch fabric, and two muffled thumps of a tail on a cushion.
+
+      non_diegetic_music: A single mischievous plucked-ukulele figure with a light hand-percussion tap enters as her head lifts, landing on one short cheeky final chord as she holds the smile.

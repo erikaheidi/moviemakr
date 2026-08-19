@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "moviemakr"
+version = "0.2.0"
+description = "Render a multi-scene movie from a YAML script with stable-diffusion.cpp in Docker."
+requires-python = ">=3.11"
+dependencies = ["PyYAML>=6"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+moviemakr = "moviemakr.cli:main"
+
+# Explicit: with both moviemakr.py (the launcher) and moviemakr/ (the package)
+# present, auto-detection would otherwise ship the launcher as a top-level
+# module that shadows the package in the wheel.
+[tool.hatch.build.targets.wheel]
+packages = ["moviemakr"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
