@@ -32,13 +32,57 @@
 #
 # That makes the labels differ per scene. The full table:
 #
-#   scene 1  (chain off):  <P1> josy  <P2> centerparcs01  <P3> bunny
-#   scene 2:               <P1> prev  <P2> josy  <P3> centerparcs02  <P4> bunny
+#   scene 1  (chain off):  <P1> josy  <P2> centerparcs01       <P3> bunny
+#   scene 2:               <P1> prev  <P2> josy  <P3> centerparcs02-1280  <P4> bunny-1280
 #   scenes 3, 4, 5:        <P1> prev  <P2> josy  <P3> bunny
 #   scenes 6, 7:           <P1> prev  <P2> josy  <P3> bunny  <P4> alice
 #   scene 8  (chain off):  <P1> josy  <P2> centerparcs01
-#   scene 9:               <P1> prev  <P2> josy  <P3> centerparcs01  <P4> bunny
+#   scene 9:               <P1> prev  <P2> josy  <P3> centerparcs01-1280  <P4> bunny-1280
 #   scene 10:              <P1> prev  <P2> josy
+#
+# The -1280 variants in scenes 2 and 9 are the same photographs, downscaled.
+# They are separate files rather than in-place edits on purpose: fingerprint()
+# hashes reference *content*, so shrinking centerparcs01.jpg in place would
+# invalidate scenes 1 and 8 as well and re-render two good clips at hours apiece.
+#
+# ---------------------------------------------------------------------------
+# REFERENCE PIXEL BUDGET - the cause of the first run's two failures
+# ---------------------------------------------------------------------------
+# moviemakr does not resize references. sd_args() passes each host path straight
+# through as -r, so a reference is encoded at whatever resolution the file is,
+# and three of these assets are 2880x2168 = 6.24 MP each:
+#
+#   bunny.jpg  centerparcs01.jpg  centerparcs02.jpg   6.24 MP
+#   josy-reference.jpg                                1.32 MP
+#   alice-in-wonderland.jpg                           0.17 MP
+#   a chained frame (544x960)                         0.52 MP
+#
+# On the first full run, scenes 2 and 9 DeviceLost'd three attempts out of three
+# while every other scene rendered. Ranked by total reference megapixels, they
+# were #1 and #2 - the only two scenes carrying TWO 6.24 MP images at once:
+#
+#   scene 9  goodbye        14.33 MP  4 refs  100 frames  FAILED
+#   scene 2  the-approach   14.33 MP  4 refs  100 frames  FAILED
+#   scene 1  the-glimpse    13.81 MP  3 refs  100 frames  ok (barely)
+#   scene 7  the-guests      8.25 MP  4 refs  100 frames  ok
+#   scene 6  the-tea-party   8.25 MP  4 refs  100 frames  ok
+#
+# Nothing else separates them. Ref *count* is ruled out (6 and 7 also carry four
+# refs at 100 frames and were fine) and frame count is ruled out (1, 3, 6 and 7
+# all ran 100). Prompt length is ruled out too - the two longest prompts in the
+# file are scenes 6 and 1, both of which rendered. The failure signature is a
+# lost GPU context immediately after tensor load, which is an allocation
+# problem, and reference pixels are what scenes 2 and 9 had more of.
+#
+# At 1280 on the long side those two scenes drop to ~4.2 MP, well under the
+# 8.25 MP that scenes 6 and 7 proved at the same frame count.
+#
+# TWO THINGS TO REMEMBER WHEN EDITING:
+#   - Adding a full-size 2880x2168 ref to a scene that already has one is what
+#     reproduces this. Check the budget, not just the ref count.
+#   - Scene 1 sits at 13.81 MP, only 0.5 MP under the two that died. It has a
+#     rendered clip and is left alone deliberately, but it is fragile: if you
+#     ever --force it, expect it to fail, and switch it to the -1280 refs first.
 #
 # If you add or remove a ref_image, or flip chain_from_previous, every label in
 # that scene shifts. Re-check the whole prompt, not just the line you edited.
@@ -201,9 +245,13 @@ scenes:
   # shorten the approach rather than raising video_frames past 100.
   - id: the-approach
     video_frames: 100         # ~4.17s - the exit, the approach, and the tilt
+    # Downscaled refs - see the REFERENCE PIXEL BUDGET note in the header. At the
+    # full-size 2880x2168 files this scene DeviceLost'd three attempts out of
+    # three; it and scene 9 were the only two scenes carrying two 6.24 MP images
+    # at once. Same photographs, 1280 on the long side.
     ref_images:
-      - centerparcs02.jpg
-      - bunny.jpg
+      - centerparcs02-1280.jpg
+      - bunny-1280.jpg
     prompt: |-
       subject_definitions:
       <Subject 1> is the small female French bulldog in <Picture 1> and <Picture 2>, compact and petite with a narrow finely-boned head, a slender neck, and a light delicate frame, with a short dark brindle coat that reads almost black, a white blaze covering the centre of her chest, large upright bat ears, wide round dark eyes, and a short deeply wrinkled muzzle.
@@ -445,9 +493,11 @@ scenes:
   # is far more likely to render as a hop.
   - id: goodbye
     video_frames: 100         # ~4.17s - the turn, the wave, and the exit
+    # Downscaled refs, same reason as scene 2 - this was the other DeviceLost.
+    # See the REFERENCE PIXEL BUDGET note in the header.
     ref_images:
-      - centerparcs01.jpg
-      - bunny.jpg
+      - centerparcs01-1280.jpg
+      - bunny-1280.jpg
     prompt: |-
       subject_definitions:
       <Subject 1> is the small female French bulldog in <Picture 1> and <Picture 2>, compact and petite with a narrow finely-boned head, a slender neck, and a light delicate frame, with a short dark brindle coat that reads almost black, a white blaze covering the centre of her chest, large upright bat ears, wide round dark eyes, and a short deeply wrinkled muzzle.
