@@ -1,0 +1,74 @@
+# One-scene short built on assets/jenga.jpeg (the inverted "AI bubble" tower).
+#   ./moviemakr.py render scripts/short/jenga-loop.yaml --dry-run
+#   ./moviemakr.py render scripts/short/jenga-loop.yaml
+name: jenga
+
+model:
+  root: /home/erika/Projects/ai-models          # host dir, mounted read-only at /models
+  diffusion_model: minimax-h3/minimax_h3_ref2va_pruned-Q8_0.gguf
+  llm:             minimax-h3/qwen3vl_32b_minimax_h3-Q4_K_M.gguf
+  vae:             minimax-h3/minimax_h3_video_vae_fp16.safetensors
+  audio_vae:       minimax-h3/minimax_h3_audio_vae_fp32.safetensors
+
+docker:
+  image: ghcr.io/leejet/stable-diffusion.cpp:master-vulkan
+  devices: [/dev/dri/card1, /dev/dri/renderD128, /dev/kfd]
+  # Your UID owns the GPU device ACLs, so the container can drop root and still
+  # reach the GPU - which keeps rendered clips owned by you instead of root.
+  run_as_current_user: true
+
+defaults:
+  width: 540
+  height: 960
+  fps: 24
+  video_frames: 90          # ~3.7s at 24fps; the model rounds this up a little
+  cfg_scale: 1.0
+  seed: 42
+  negative_prompt: ""
+  # Empty on purpose: an H3-structured prompt ends with non_diegetic_music, and a
+  # style_suffix would be appended after it and read as part of the music line.
+  # The look lives in detailed_description instead.
+  style_suffix: ""
+  # --mmap matters here: ~39 GB of weights reload on every scene, and with your
+  # RAM the page cache keeps them warm between runs.
+  # Note: the VAE is left on the GPU on purpose - "--backend vae=cpu" made the
+  # audio decode at the end of each scene much slower.
+  extra_args: ["--diffusion-fa", "--mmap", "--backend", "te=cpu"]
+
+continuity:
+  anchors: []
+  chain_from_previous: false
+
+output:
+  container: mp4             # mp4 (h264/aac) or webm (vp9/opus)
+  audio: keep                # keep the model's generated audio, or "strip"
+  music: null                # optional file under assets/, mixed under the movie
+  music_gain_db: -18
+
+scenes:
+  - id: nudge
+    # Single ref, no anchors and no chaining, so jenga.jpeg is <Picture 1>.
+    ref_images: [jenga.jpeg]
+    prompt: |-
+      subject_definitions:
+      <Picture 1> is the composition anchor and opening frame of [Shot 1], showing an upside-down wooden block tower standing on a dark walnut desk.
+      <Subject 1> is the inverted wooden block tower in <Picture 1>: pale natural-birch Jenga blocks stacked into a wedge that is broad and heavy at the top and tapers to a narrow point at the bottom, where the entire structure balances on just two thin angled blocks. Printed logos face the camera on single blocks up the front face, reading "ORACLE" in red at the top, then "JPMorgan" in black serif, then the green eye mark and "NVIDIA", then "SPACEX", then the four-square mark and "Microsoft"; the two slanted legs at the very bottom read "OpenAI" with its knot mark and "ANTHROPIC".
+      <Subject 2> is the desk environment in <Picture 1>: a warm dark-walnut wood surface, a closed black notebook with a pen at the left edge, a potted green plant blurred in the upper-left background, a dark monitor and a matte grey mug in the blurred upper-right background, soft daylight from a window behind.
+
+      summary:
+      [reference generation] The target video is a single continuous shot in which <Subject 1> stands balanced on <Subject 2> exactly as framed in <Picture 1>. An orange tabby cat steps into the frame from the right, sniffs the two slanted bottom blocks, taps one with a paw so the whole tower sways, then turns to look straight into the lens with a pleased, mischievous expression while the tower keeps wobbling behind it.
+
+      retention_analysis:
+      <Picture 1> ([Shot 1] opening frame): fully_preserved - the low three-quarter camera angle, the tower's position in the center of the frame, and the shallow-focus desk background are retained from the first frame onward.
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the inverted wedge silhouette, the pale birch grain, the block courses, the two thin angled legs, and every printed logo and its position on the tower are retained; only the tower's small sway is added.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - the walnut desk surface, black notebook and pen, background plant, dark monitor, grey mug, and soft window daylight are retained.
+
+      detailed_description:
+      The target video is live-action and photographic, shot on a long lens at a low three-quarter angle with shallow depth of field, soft daylight, and warm natural wood tones.
+      [Shot 1] The shot opens exactly on <Picture 1>: <Subject 1>, the top-heavy inverted block tower, fills the center of the vertical frame on the walnut desk of <Subject 2>, its wide upper courses sharply in focus and the plant, monitor, and mug behind it softened into blur. The camera holds nearly still, drifting a few centimeters closer with a very slow push-in. For the first moment nothing moves but dust motes in the window light. Then, from the right edge of the frame at desk level, an orange tabby cat with white chest fur and green eyes eases into view, low and unhurried, head first. It brings its nose to within a few centimeters of the two thin slanted legs at the base, the ones printed "OpenAI" and "ANTHROPIC", and sniffs them twice, whiskers brushing the wood. The cat lifts its right front paw with deliberate slowness, holds it in the air beside the "ANTHROPIC" block, and taps the block once from the side. The strike is light, but the whole wedge above it shifts: the tower rocks to the left, the wide top courses lean out over the desk, the stacked blocks grind and click against each other, and the "ORACLE" block at the very top slides a centimeter proud of the stack before the structure sways back the other way and keeps oscillating, still standing. The cat pulls its paw back and freezes, ears forward. It then turns its head straight toward the lens and holds the gaze, pupils wide, chin slightly lowered, in an unmistakably pleased and mischievous expression. Behind it the tower is still swaying as the shot ends. No one speaks at any point.
+
+      overall_soundscape:
+      Quiet indoor room tone with a faint low hum from the monitor throughout. Soft padded footfalls as the cat steps onto the desk, two light nasal sniffs, then a dry wooden knock as the paw strikes the block, followed by a rising series of hollow wooden clicks and grinding as the stacked blocks rock against each other and slowly settle. No speech.
+
+      non_diegetic_music:
+      A single sparse, playful pizzicato string note lands on the paw tap, followed by a light held tremolo of high strings that hangs unresolved under the wobbling tower until the final frame.
