@@ -1,0 +1,618 @@
+# josy-bat-dream - a ten-scene short, told almost entirely in first person.
+# A man walks into the holiday-home living room and finds Josy on the couch with
+# her tongue out. His glasses fog up, he takes them off and cleans them on his
+# shirt, puts them back on, looks up again - and she has morphed into a large
+# fruit bat. She spreads her wings, flies a lap of the room, and disappears over
+# the treeline. Cut back to the couch: Josy is asleep, and wakes with a start.
+# It was her dream, dreamt from her human's eyes.
+#
+#   ./moviemakr.py render scripts/h3/josy-bat-dream.yaml --dry-run
+#   ./moviemakr.py render scripts/h3/josy-bat-dream.yaml --only 1
+#   ./moviemakr.py render scripts/h3/josy-bat-dream.yaml
+#   ./moviemakr.py status scripts/h3/josy-bat-dream.yaml
+#
+# Prompts are written through the `h3-prompt-writing` skill in full-reference
+# (Ref2VA) form - see .claude/skills/h3-prompt-writing/references/ref-en.txt.
+# Same two adaptations as scripts/h3/josy-beach-drive.yaml, because moviemakr
+# generates one shot per docker run rather than a whole movie:
+#
+#   1. Every scene is a single [Shot 1] with no cut timestamp. The cuts in this
+#      story happen between docker runs, not inside them.
+#   2. detailed_description runs ~200-250 words, not the guide's 350-500. That
+#      range is for a full multi-shot video; one ~3.75-second shot carries far
+#      less information. (Note the sibling scripts' headers claim "130-180" -
+#      that figure is stale. Measured, josy-beach-drive runs 201-245,
+#      in-the-woods 188-224, butterfly-dream 243-293. This file sits at 197-250,
+#      which is the range those files actually use.)
+#
+# ---------------------------------------------------------------------------
+# SCENE BREAKDOWN - why ten scenes for an eight-beat draft
+# ---------------------------------------------------------------------------
+# video_frames is 90 (~3.75s) everywhere except scene 10, so the main way to
+# give a beat more time is to give it its own scene. Two drafted scenes carried
+# more action than 3.75s can hold and were split; the other six map one to one:
+#
+#   draft 1 (door opens, sees her)     -> 1  the-door
+#   draft 2 (head lifts, fog, look down)-> 2  she-lifts-her-head
+#                                       -> 3  looking-down
+#   draft 3 (glasses off, wipe on shirt)-> 4  cleaning-the-glasses
+#   draft 4 (glasses on, look up, morph)-> 5  glasses-back-on
+#                                       -> 6  the-reveal
+#   draft 5 (wings, takeoff, "Josy?!")  -> 7  taking-flight
+#   draft 6 (out into the wild, gone)   -> 8  out-into-the-wild
+#   draft 7 (cut back, asleep, wakes)   -> 9  waking
+#   draft 8 (startled, relief, sleeps)  -> 10 just-a-dream
+#
+# The two splits are both places where a camera move and a story beat were
+# competing for the same 3.75 seconds. Draft 2 asks for a head lift, a lens fog
+# and a full tilt down the body; the fog needs time to creep in or it reads as a
+# render fault, so the tilt got its own shot. Draft 4 asks for the glasses to
+# come back on AND the morph reveal - packing both into one shot is how the
+# reveal turns into a dissolve you cannot see. Scene 5 ends mid-tilt with Josy
+# still below the frame line, so scene 6 opens on nothing but the rising frame
+# and the bat arrives all at once.
+#
+# Scene 10 is the densest shot in the film - startle, scan, relief, settle - so
+# it is the one scene raised to video_frames: 100, which sd-cli rounds to 107
+# (~4.46s). Every beat there is a small head movement on a locked-off camera,
+# which is why the extra ~0.7s buys real room rather than dead air. It is also
+# the cheapest scene in the film to re-render if the pacing still misses.
+# Compare scene 7, where the wing spread and the takeoff are one continuous
+# motion rather than two events, and 90 is enough.
+#
+# 100 is the ceiling, not a starting point: 110 rounds to 124 frames and takes
+# the GPU out with DeviceLost (see scripts/h3/butterfly-dream.yaml).
+#
+# ---------------------------------------------------------------------------
+# THE <Picture N> CONTRACT - read before editing any prompt
+# ---------------------------------------------------------------------------
+# Refs reach sd-cli as: chained previous frame first (render() inserts it at
+# index 0), then continuity.anchors in order, then the scene's own ref_images.
+# With one anchor, that fixes the labels as:
+#
+#   scene 1 (chain off, 3 refs):
+#     <Picture 1> = assets/josy-reference.jpg
+#     <Picture 2> = assets/centerparcs01-1280.jpg
+#     <Picture 3> = assets/josy-tongue.jpeg
+#
+#   scene 2 (chained, 1 scene ref):
+#     <Picture 1> = the previous scene's last frame
+#     <Picture 2> = assets/josy-reference.jpg
+#     <Picture 3> = assets/josy-tongue.jpeg
+#
+#   scenes 3-5 (chained, no scene refs):
+#     <Picture 1> = the previous scene's last frame
+#     <Picture 2> = assets/josy-reference.jpg
+#
+#   scenes 6-7 (chained, 1 scene ref):
+#     <Picture 1> = the previous scene's last frame
+#     <Picture 2> = assets/josy-reference.jpg
+#     <Picture 3> = assets/josy-bat.jpeg
+#
+#   scene 8 (chained, 2 scene refs):
+#     <Picture 1> = the previous scene's last frame
+#     <Picture 2> = assets/josy-reference.jpg
+#     <Picture 3> = assets/josy-bat.jpeg
+#     <Picture 4> = assets/centerparcs02-1280.jpg
+#
+#   scene 9 (chain off, 3 refs):
+#     <Picture 1> = assets/josy-reference.jpg
+#     <Picture 2> = assets/centerparcs01-1280.jpg
+#     <Picture 3> = assets/josy-tongue.jpeg
+#
+#   scene 10 (chained, 1 scene ref):
+#     <Picture 1> = the previous scene's last frame
+#     <Picture 2> = assets/josy-reference.jpg
+#     <Picture 3> = assets/josy-tongue.jpeg
+#
+# If you flip chain_from_previous on any scene, every label in it shifts by one.
+#
+# Two scenes deliberately break the chain:
+#   scene 1  - nothing to chain from.
+#   scene 9  - this is the cut from dream to waking. Chaining scene 8's empty
+#              overcast sky in would drag the garden and the flight into the
+#              shot that exists to prove neither happened. centerparcs01 and
+#              josy-tongue restate the opening framing from clean plates
+#              instead, which is also what makes 9 rhyme with 1 on screen.
+#
+# <Subject N> numbering is per scene, in order of first appearance, as the guide
+# specifies, so the same dog is <Subject 1> in scene 1 and <Subject 2> in scene
+# 3. That is correct - each scene is an independent generation.
+#
+# retention_analysis only carries lines for reference-backed labels, per the
+# guide's "one line for each reference label". The man is invented outright - no
+# picture defines him - so he gets a subject_definitions entry for consistency
+# across scenes and no retention line. Do not invent a marker for him;
+# fully_preserved against nothing is what makes the model start hunting for him
+# in the anchor.
+#
+# ---------------------------------------------------------------------------
+# THE ROOM - two photos of two different rooms, deliberately fused
+# ---------------------------------------------------------------------------
+# centerparcs01-1280.jpg is the holiday home: floor-to-ceiling sliding glass
+# doors onto a wet patio, light wood-look floor, cream floor lamp, overcast
+# daylight. josy-tongue.jpeg is a different couch entirely, in a different room.
+# The film needs the room from the first and the couch, the two pillows and her
+# exact pose from the second, so every prompt marks centerparcs01 as
+# partially_preserved (shell, glass doors, floor, light - not its furniture) and
+# josy-tongue as fully_preserved (couch, fern pillow, monstera pillow, pose).
+# Saying only "the living room in <Picture 2>" gets you the blue sectional from
+# the photo and no monstera pillow, and then scene 9 no longer rhymes with
+# scene 1.
+#
+# The -1280 downscales are used for both plates rather than the 2880px
+# originals; they are the same frames at a quarter of the ref payload.
+#
+# ---------------------------------------------------------------------------
+# THE BAT - assets/josy-bat.jpeg is a face-and-wing reference, not a flight one
+# ---------------------------------------------------------------------------
+# The photo is Josy on the monstera pillow with small membranous wings folded at
+# her shoulders - a still, perched creature with wings that could not lift her.
+# Scenes 6-8 need something that actually flies, so they mark it
+# partially_preserved and name exactly what survives (her brindle frenchie head,
+# wrinkled muzzle, lolling tongue, the leathery hooked-thumb wing membranes, the
+# clawed feet on the pillow) and what does not (the wingspan, which opens to
+# roughly four times her body length, and the body, which lengthens into a
+# fox-faced fruit bat's).
+#
+# It is passed to scenes 6, 7 and 8 only. Scenes 1-2 and 9-10 must never see it:
+# they are the ordinary dog, and half a wing bleeding into the waking scenes
+# would give the ending away.
+#
+# ---------------------------------------------------------------------------
+# THE TWO KINDS OF BLUR - do not merge these
+# ---------------------------------------------------------------------------
+# The film turns on the difference, so each is described in fixed language:
+#
+#   fog (scenes 2-3)   - condensation ON the lenses. Creeps in from the frame
+#                        edges as a milky white veil, blooms hard around the
+#                        bright glass doors, and leaves the geometry of the room
+#                        readable underneath.
+#   myopia (scene 4)   - his own uncorrected short sight, once the glasses are
+#                        off. Uniform soft defocus across the whole frame, every
+#                        highlight swelling into a round halo, edges doubling.
+#
+# Scene 4 is the handover: the fog leaves with the glasses and the myopic blur
+# arrives in the same instant. Scene 5 is the snap back to hard focus.
+#
+# ---------------------------------------------------------------------------
+# KEEPING HER FEMALE - don't drop these when editing
+# ---------------------------------------------------------------------------
+# Carried over from scripts/h3/josy-house-party.yaml, where an early take
+# rendered a male dog despite a dozen "she"s. Grammatical gender is weak
+# conditioning for this model, and a negative prompt cannot fix it (cfg_scale is
+# 1.0, so CFG is off and negative_prompt is never evaluated). What carries it:
+# build, not pronouns - "small, compact, petite, narrow finely-boned head,
+# slender neck, light delicate frame", restated in BOTH subject_definitions and
+# at her first appearance in detailed_description, per the guide's rule. It is
+# restated in the bat scenes too: the morph changes her body, and dropping the
+# build language there is how she comes back male in scene 9.
+name: josy-bat-dream
+
+model:
+  root: /home/erika/Projects/ai-models          # host dir, mounted read-only at /models
+  diffusion_model: minimax-h3/minimax_h3_ref2va_pruned-Q8_0.gguf
+  llm:             minimax-h3/qwen3vl_32b_minimax_h3-Q4_K_M.gguf
+  vae:             minimax-h3/minimax_h3_video_vae_fp16.safetensors
+  audio_vae:       minimax-h3/minimax_h3_audio_vae_fp32.safetensors
+
+docker:
+  image: ghcr.io/leejet/stable-diffusion.cpp:master-vulkan
+  devices: [/dev/dri/card1, /dev/dri/renderD128, /dev/kfd]
+  # Your UID owns the GPU device ACLs, so the container can drop root and still
+  # reach the GPU - which keeps rendered clips owned by you instead of root.
+  run_as_current_user: true
+
+defaults:
+  # Portrait, as every other script in scripts/h3/. josy-tongue.jpeg is a
+  # landscape photo, so scenes 1 and 9 hold its camera angle - eye level, square
+  # to the couch, her head just above centre - rather than its crop.
+  width: 544
+  height: 960
+  fps: 24
+  # ~3.75s. sd-cli rounds this UP, and not by one or two: measured on this box
+  # at 544x960, 90 stays 90, 100 becomes 107, 110 becomes 124. Check the
+  # "generate_video 544x960xN" line in the log for what you actually got. Held
+  # at 90 for every scene here; extra time comes from extra scenes instead.
+  video_frames: 90
+  cfg_scale: 1.0
+  seed: 42
+  negative_prompt: ""       # no effect at cfg_scale 1.0 - CFG is off, so the
+                            # negative prompt is never evaluated. Steer with
+                            # positive description instead.
+  # MUST stay empty for H3-structured prompts. full_prompt() appends the suffix
+  # as ". <suffix>" at the very end - which here is the end of
+  # non_diegetic_music, so the style text would read as part of the score. The
+  # look lives in each scene's detailed_description opening line instead.
+  style_suffix: ""
+  # --mmap matters: ~39 GB of weights reload on every scene, and the page cache
+  # keeps them warm between runs. The VAE stays on the GPU on purpose -
+  # "--backend vae=cpu" made the audio decode at the end of each scene slower.
+  extra_args: ["--diffusion-fa", "--mmap", "--backend", "te=cpu"]
+
+continuity:
+  # One anchor, passed to every scene: the clean full-body shot that fixes her
+  # build, coat, white chest blaze and bat ears. Scenes 3-5 do not show her at
+  # all and still get it - anchors are global - so those three prompts say in
+  # so many words that she is out of frame behind the camera's tilt. Without
+  # that the anchor keeps trying to put a dog on the floor next to his sneakers.
+  anchors:
+    - josy-reference.jpg
+
+  # Reference *videos* stay empty on purpose: on this box a --ref-video either
+  # crashes the GPU with DeviceLost or drags the whole pipeline onto the CPU.
+  # Reference images do not - chaining has always used them.
+  anchor_videos: []
+
+  chain_from_previous: true
+
+output:
+  container: mp4             # mp4 (h264/aac) or webm (vp9/opus)
+  audio: keep                # keep the model's generated audio, or "strip"
+  music: null                # optional file under assets/, mixed under the movie
+  music_gain_db: -18
+
+scenes:
+  # =========================================================================
+  # DRAFT SCENE 1 - he opens the door and finds her
+  # =========================================================================
+
+  # -------------------------------------------------------------------------
+  # 1. The door.
+  # -------------------------------------------------------------------------
+  # The only scene with chaining off at the front, so the labels here are
+  # anchor-then-scene-refs. It has to establish three things at once - the
+  # first-person camera, the room, and her on the couch - so the only action is
+  # a door and six steps. She does nothing but look back at the lens; her first
+  # move is scene 2's whole job.
+  - id: the-door
+    chain_from_previous: false
+    ref_images:
+      - centerparcs01-1280.jpg
+      - josy-tongue.jpeg
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the small female French bulldog in <Picture 1> and <Picture 3>: compact and petite, with a narrow finely-boned head, a slender neck, and a light delicate frame, a short dark brindle coat that reads almost black, faint lighter brindle striping along her flanks, a white blaze covering the centre of her chest, large upright bat ears, wide round dark eyes, a short deeply wrinkled muzzle, and a flat black nose.
+      <Subject 2> is the living room in <Picture 2>: a holiday-home lounge with a wall of floor-to-ceiling sliding glass doors along one side, a wet paved patio and dense green trees beyond them under flat overcast daylight, pale wood-look plank flooring, a cream drum-shaded floor lamp in the corner, and plain grey walls.
+      <Subject 3> is the couch in <Picture 3>: a low grey fabric couch with a taupe woven back, a pale blue-grey fern-print cushion propped against the backrest, and a large tropical cushion printed with teal and green monstera leaves lying flat across the front of the seat.
+      <Subject 4> is the man whose eyes the camera occupies. He is never seen in this shot; the frame is his point of view, at the eye height of a standing adult, and only his bare right hand enters the frame.
+
+      summary:
+      [reference generation] The target video is a handheld first-person shot from the eyes of <Subject 4>: his hand pushes a door open, he walks into <Subject 2>, and the camera settles on <Subject 1> lying on <Subject 3> with her chin over the monstera cushion and her tongue hanging out, looking straight back at him. <Picture 1> supplies her build and coat, <Picture 2> the room, <Picture 3> the couch, the cushions and her exact pose.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the petite finely-boned build, near-black brindle coat, white chest blaze, large upright bat ears, wide round dark eyes, short wrinkled muzzle and the loose pink tongue hanging over her lower jaw are retained from <Picture 3>.
+      <Subject 2> (appears in [Shot 1]): partially_preserved - the wall of sliding glass doors, the patio and treeline beyond, the pale wood-look flooring, the cream floor lamp and the flat overcast daylight of <Picture 2> are retained; its own furniture is replaced by <Subject 3>.
+      <Subject 3> (appears in [Shot 1]): fully_preserved - the low grey couch, the taupe woven backrest, the blue-grey fern-print cushion and the teal-and-green monstera cushion of <Picture 3> are retained.
+
+      detailed_description:
+      The target video is photorealistic live-action footage in a natural handheld first-person style, shot on a wide lens at standing eye height in flat cool overcast daylight, with a shallow depth of field and fine film grain.
+      [Shot 1] The frame opens close on a plain pale interior door filling most of it. The bare right hand of <Subject 4> enters from the lower right, presses the handle down with a small metallic give, and pushes; the door swings away and the camera walks forward through the opening with the light bounce of a real stride. <Subject 2> opens out ahead - the wall of sliding glass doors on the right, rain-beaded, with the wet patio and dark green trees behind them, pale plank flooring running away, the cream floor lamp standing in the far corner. The camera swings gently left and settles on <Subject 3>. Lying on the seat is <Subject 1>, the small compact female French bulldog with the narrow finely-boned head, slender neck, white chest blaze and large upright bat ears, stretched out on her belly with her chin resting over the monstera cushion. Her pink tongue hangs loose over her lower jaw. She does not move; her round dark eyes hold the lens. The camera stops and breathes.
+
+      overall_soundscape: Quiet indoor room tone throughout, with steady light rain on the glass doors and a soft wind in the trees outside. A metallic handle latch, a door hinge sighing open, and four unhurried footsteps on plank flooring, closer and slower as the camera settles. A close snuffling flat-faced breath from the couch. No speech.
+
+      non_diegetic_music: A quiet unhurried fingerpicked acoustic guitar figure at a slow tempo with a single soft sustained cello note underneath, warm and domestic, holding an even dynamic and thinning to almost nothing as the camera settles on the couch.
+
+  # =========================================================================
+  # DRAFT SCENE 2 - her head comes up, the lenses fog, he looks down
+  # =========================================================================
+
+  # -------------------------------------------------------------------------
+  # 2. She lifts her head.
+  # -------------------------------------------------------------------------
+  # Two things happen at once and the ordering matters: her head has to be all
+  # the way up and readable BEFORE the veil closes, or the audience never gets
+  # a clean look at the dog they are about to lose. The fog is written as a
+  # creep from the frame edges inward, with the geometry of the room staying
+  # legible underneath - see THE TWO KINDS OF BLUR in the header.
+  - id: she-lifts-her-head
+    ref_images:
+      - josy-tongue.jpeg
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the small female French bulldog established in <Picture 1>, <Picture 2> and <Picture 3>: compact and petite, with a narrow finely-boned head, a slender neck and a light delicate frame, a near-black brindle coat, a white blaze on the centre of her chest, large upright bat ears, wide round dark eyes, a short deeply wrinkled muzzle, and a loose pink tongue hanging over her lower jaw.
+      <Subject 2> is the couch and living room in <Picture 1> and <Picture 3>: a low grey fabric couch with a taupe woven back, a pale blue-grey fern-print cushion against the backrest and a large teal-and-green monstera-print cushion across the front of the seat, standing in a holiday-home lounge with a wall of rain-beaded sliding glass doors, a wet patio and dark green trees beyond, and pale wood-look plank flooring.
+      <Subject 3> is the man whose eyes the camera occupies. He is never seen; the frame is his point of view at standing eye height, and he wears glasses whose lenses fog over during the shot.
+
+      summary:
+      [reference generation] The target video continues directly from <Picture 1>: <Subject 1> lifts her head off the monstera cushion of <Subject 2> and looks up at the camera, and a milky condensation veil then creeps in from the edges of the frame as the lenses of <Subject 3> fog over, leaving the room soft and white by the end. <Picture 1> supplies the exact framing and light, <Picture 2> her build and coat, <Picture 3> the couch and cushions.
+
+      retention_analysis:
+      <Picture 1> ([Shot 1] opening frame): fully_preserved - the first-person framing of the couch, the position of the dog in the frame, the glass doors, the flooring and the flat overcast daylight are retained from the first frame onward.
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the petite finely-boned build, near-black brindle coat, white chest blaze, large upright bat ears, wide round dark eyes, wrinkled muzzle and lolling pink tongue are retained.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - the grey couch, taupe backrest, fern-print cushion, monstera-print cushion, sliding glass doors and plank flooring are retained; they go progressively soft and white behind the condensation without changing position.
+
+      detailed_description:
+      The target video is photorealistic live-action footage in a natural handheld first-person style, shot on a wide lens at standing eye height in flat cool overcast daylight, with a shallow depth of field and fine film grain.
+      [Shot 1] The shot opens exactly on <Picture 1>: the first-person view of <Subject 1>, the small compact female French bulldog with the narrow finely-boned head, slender neck, white chest blaze and large upright bat ears, lying on <Subject 2> with her chin over the monstera cushion and her tongue out. The camera holds, swaying faintly with breath. She raises her head off the cushion in one smooth unhurried lift, the loose skin of her throat gathering, both ears swivelling forward to face the lens, her tongue still hanging loose. Her round dark eyes track upward and lock on. As her head reaches its full height, a fine milky veil of condensation begins creeping in from all four edges of the frame, spreading inward in soft blooming fingers. The bright rectangles of the glass doors swell into white haloes first. The room stays readable underneath - couch, cushions, dog - but every edge softens and the colour drains toward white until the whole frame is heavily fogged and she is only a dark shape on a pale cushion.
+
+      overall_soundscape: Quiet indoor room tone throughout, with steady light rain on the glass doors and soft wind in the trees. A small rustle of fabric as her chin leaves the cushion, a single soft huff through a flat face, and the close slow breathing of the man behind the camera, warm and near the microphone. No speech.
+
+      non_diegetic_music: The quiet fingerpicked acoustic guitar figure continues at the same slow tempo, its picking pattern thinning to single notes as the fog spreads and giving way to one long sustained cello note that swells gently and hangs unresolved.
+
+  # -------------------------------------------------------------------------
+  # 3. Looking down.
+  # -------------------------------------------------------------------------
+  # The reveal of who has been holding the camera. Shot entirely through the
+  # fog, which is why it can afford to be a pure camera move with no other
+  # action in it. Note the explicit "she is not in frame at any point" - the
+  # global josy-reference anchor otherwise keeps trying to seat a second dog on
+  # the floor beside his sneakers.
+  - id: looking-down
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the man whose eyes the camera occupies, seen for the first time by looking down at his own body: an adult man in a plain dark charcoal cotton t-shirt and mid-blue denim jeans, with clean white leather low-top sneakers. His face is never seen - the frame is his point of view - and his glasses are fogged over throughout.
+      <Subject 2> is the living room in <Picture 1>: a holiday-home lounge with a low grey couch carrying a pale blue-grey fern-print cushion and a large teal-and-green monstera-print cushion, a wall of rain-beaded sliding glass doors onto a wet patio and dark green trees, and pale wood-look plank flooring, all seen through heavy lens condensation.
+      <Picture 2> is the source of the small female French bulldog who was lying on the couch in <Picture 1>. She stays behind and above the camera's tilt for this whole shot and is not seen.
+
+      summary:
+      [reference generation] The target video continues directly from <Picture 1>: still shot through the fogged lenses of <Subject 1>, the camera tilts down off the couch, past the plank flooring of <Subject 2>, and comes to rest looking straight down his own body at his dark t-shirt, his jeans and his white sneakers on the floor. <Picture 1> supplies the opening frame, the room and the fog.
+
+      retention_analysis:
+      <Picture 1> ([Shot 1] opening frame): fully_preserved - the fogged first-person view of the couch, the cushions, the glass doors and the flat overcast daylight are retained at the start of the shot, before the camera tilts away from them.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - the couch, cushions, sliding glass doors, patio, treeline and plank flooring are retained and pass through the frame as the camera tilts down.
+      <Picture 2> (source of the dog, who is out of frame in this shot): weak_reference - no dog appears anywhere in this shot; only the flat cool interior light of <Picture 2> carries over.
+
+      detailed_description:
+      The target video is photorealistic live-action footage in a natural handheld first-person style, shot on a wide lens in flat cool overcast daylight, seen throughout through a heavy milky veil of lens condensation that blooms every highlight into a soft white halo, with fine film grain.
+      [Shot 1] The shot opens exactly on <Picture 1>, the heavily fogged view of the grey couch and its monstera cushion in <Subject 2>, the dog on it now only a dark unreadable shape. The camera tilts down in one steady unhurried arc, the couch rising out of the top of frame, the pale plank flooring sweeping past, and comes to rest looking straight down the body of <Subject 1>. From this steep first-person angle his plain dark charcoal t-shirt fills the upper frame in heavy foreshortening, its hem falling across the tops of his mid-blue denim jeans; the jeans run away down the frame in perspective, and his clean white leather sneakers sit flat and small on the plank flooring at the far end. Everything stays soft and white behind the condensation. His chest rises and falls once; the frame drifts with it. He shifts his weight, and one white sneaker turns slightly on the boards. No dog is in frame at any point in this shot.
+
+      overall_soundscape: Quiet indoor room tone throughout, with steady light rain on the glass doors and soft wind in the trees. A rustle of cotton and denim as the body shifts, one rubber sole turning with a faint squeak on the plank floor, and close slow breathing near the microphone. No speech.
+
+      non_diegetic_music: The sustained cello note from before holds on quietly underneath, unmoving and unresolved, joined partway through by a single soft muted piano note. No rhythm.
+
+  # =========================================================================
+  # DRAFT SCENE 3 - the glasses come off and get cleaned
+  # =========================================================================
+
+  # -------------------------------------------------------------------------
+  # 4. Cleaning the glasses.
+  # -------------------------------------------------------------------------
+  # The handover shot: the fog leaves with the glasses and his uncorrected short
+  # sight arrives in the same frame. Both blurs are named in their fixed
+  # language so the model does not average them into one generic soft focus.
+  # The brief specifies LEFT hand off, RIGHT hand cleaning; front-on POV that
+  # puts the left hand on the LEFT of frame, so the prompt says both.
+  - id: cleaning-the-glasses
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the man whose eyes the camera occupies, as established in <Picture 1>: an adult man in a plain dark charcoal cotton t-shirt and mid-blue denim jeans with clean white leather low-top sneakers, seen only by looking down his own body. He is short-sighted, and without his glasses everything he sees falls out of focus.
+      <Subject 2> is his pair of glasses: a plain pair with slim dark rectangular frames and clear lenses, veiled in white condensation when the shot opens.
+      <Subject 3> is the living room in <Picture 1>: a holiday-home lounge with pale wood-look plank flooring and a wall of rain-beaded sliding glass doors onto a wet patio and dark green trees under flat overcast daylight.
+      <Picture 2> is the source of the small female French bulldog who is lying on the couch behind and above the camera. She stays out of frame for this whole shot and is not seen.
+
+      summary:
+      [reference generation] The target video continues directly from <Picture 1>: still looking down his own body, <Subject 1> lifts <Subject 2> off his face with his left hand - and as the fog leaves with them the whole frame drops into the soft uncorrected blur of his short sight - then pinches the hem of his t-shirt in his right hand and wipes a lens with it. <Picture 1> supplies the opening frame, his clothing and the room.
+
+      retention_analysis:
+      <Picture 1> ([Shot 1] opening frame): fully_preserved - the steep first-person view down his own body, the dark charcoal t-shirt, the mid-blue jeans, the white sneakers on plank flooring and the flat overcast daylight are retained; only the character of the blur over them changes.
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the plain dark charcoal t-shirt, mid-blue denim jeans and clean white low-top sneakers of <Picture 1> are retained.
+      <Subject 3> (appears in [Shot 1]): fully_preserved - the plank flooring, the sliding glass doors and the wet green garden beyond them are retained behind the action.
+      <Picture 2> (source of the dog, who is out of frame in this shot): weak_reference - no dog appears anywhere in this shot; only the flat cool interior light of <Picture 2> carries over.
+
+      detailed_description:
+      The target video is photorealistic live-action footage in a natural handheld first-person style, shot on a wide lens in flat cool overcast daylight with fine film grain, and its focus changes twice: it opens under a milky white veil of lens condensation and, once the glasses are lifted away, becomes a uniform soft defocus across the whole frame in which every highlight swells into a round halo and every edge doubles.
+      [Shot 1] The shot opens exactly on <Picture 1>, the fogged steep view down the charcoal t-shirt, blue jeans and white sneakers of <Subject 1>. His bare left hand rises into the left of frame, reaches up past the top edge, and draws <Subject 2> down and away from his face. In the instant the slim dark frames leave, the milky veil goes with them and the entire image slackens into his own soft short-sighted blur - the sneakers becoming pale smears on the boards, the glass doors swelling into one bright halo. He brings the glasses down in front of his chest, holding them by one arm. His right hand comes up into the right of frame, catches the hem of his t-shirt, pinches the fabric over a lens between finger and thumb, and rubs it in small firm circles, the shirt hem stretching and puckering with each pass. He turns the frames over and wipes the second lens. The blur never lifts.
+
+      overall_soundscape: Quiet indoor room tone throughout, with steady light rain on the glass doors and soft wind in the trees. A light plastic click as the temples come clear of his ears, the dry squeaking rub of cotton on glass in small repeated circles, a rustle of shirt fabric, and close breathing near the microphone. No speech.
+
+      non_diegetic_music: A small dry woodblock and pizzicato-string figure enters at a moderate tempo on the first wipe, light and faintly comic, tapping along with the circles of the cloth and stopping cleanly on the last pass.
+
+  # =========================================================================
+  # DRAFT SCENE 4 - the glasses go back on and she is not a dog any more
+  # =========================================================================
+
+  # -------------------------------------------------------------------------
+  # 5. Glasses back on.
+  # -------------------------------------------------------------------------
+  # Ends deliberately mid-move, with the tilt still rising and Josy still below
+  # the frame line - the last frame chained into scene 6 is the couch base and
+  # nothing else. Handing scene 6 a frame with any part of her in it is how the
+  # morph becomes a cross-dissolve instead of a cut you cannot argue with.
+  - id: glasses-back-on
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the man whose eyes the camera occupies, as established in <Picture 1>: an adult man in a plain dark charcoal cotton t-shirt and mid-blue denim jeans with clean white leather low-top sneakers, seen only by looking down his own body, short-sighted and holding his glasses in his left hand as the shot opens.
+      <Subject 2> is his pair of glasses: a plain pair with slim dark rectangular frames and clear lenses, now wiped clean and free of condensation.
+      <Subject 3> is the living room in <Picture 1>: a holiday-home lounge with pale wood-look plank flooring, a wall of rain-beaded sliding glass doors onto a wet patio and dark green trees, and a low grey couch, all under flat overcast daylight.
+      <Picture 2> is the source of the small female French bulldog lying on that couch. She remains above the top edge of frame for this whole shot and is not seen.
+
+      summary:
+      [reference generation] The target video continues directly from <Picture 1>: <Subject 1> raises <Subject 2> back toward his face with his left hand until the frames pass out of view at the edges of the frame and the whole image snaps into hard focus, then begins tilting the camera up off the floor of <Subject 3> toward the couch, the shot ending while the tilt is still in motion. <Picture 1> supplies the opening frame, his clothing, the room and the soft short-sighted blur it starts in.
+
+      retention_analysis:
+      <Picture 1> ([Shot 1] opening frame): fully_preserved - the steep first-person view down his own body, the dark charcoal t-shirt, mid-blue jeans, white sneakers on plank flooring, the soft short-sighted blur and the flat overcast daylight are retained at the start of the shot, before the glasses go on and the camera tilts up.
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the plain dark charcoal t-shirt, mid-blue denim jeans and clean white low-top sneakers of <Picture 1> are retained.
+      <Subject 3> (appears in [Shot 1]): fully_preserved - the plank flooring, sliding glass doors, wet green garden and the base of the grey couch are retained, now sharp rather than blurred.
+      <Picture 2> (source of the dog, who is out of frame in this shot): weak_reference - no dog appears anywhere in this shot; only the flat cool interior light of <Picture 2> carries over.
+
+      detailed_description:
+      The target video is photorealistic live-action footage in a natural handheld first-person style, shot on a wide lens in flat cool overcast daylight with fine film grain. It opens in a uniform soft short-sighted defocus with every highlight swollen into a halo, and resolves into crisp hard focus with clean edges and readable texture the moment the glasses seat.
+      [Shot 1] The shot opens exactly on <Picture 1>, the soft blurred view down the charcoal t-shirt, blue jeans and white sneakers of <Subject 1>, <Subject 2> held in his left hand at the lower left. He raises the glasses toward his face. The slim dark rectangular frames climb the frame and grow fast, their two lens rims swelling until they arch across the whole image, then sweeping out past the top and side edges as they settle onto his nose. In that instant the picture snaps hard into focus - the weave of the charcoal cotton, the stitching on the denim, the rubber welt of the white sneakers, the rain beading on the glass doors, all suddenly sharp. He straightens, and the camera begins to tilt up off the plank flooring in one smooth accelerating arc. His jeans and shirt hem drop away below, the boards sweep past, and the pale wooden base and lower grey cushions of the couch in <Subject 3> rise into the bottom of frame. The tilt is still in motion when the shot ends, the seat cushions filling the frame and nothing above them yet.
+
+      overall_soundscape: Quiet indoor room tone throughout, with steady light rain on the glass doors and soft wind in the trees. A small plastic click and a scrape of a temple arm settling over an ear, one short satisfied exhale through the nose, and a rustle of cotton as he straightens. No speech.
+
+      non_diegetic_music: The dry woodblock and pizzicato figure stops dead as the glasses seat, leaving a beat of silence, then one low string note enters quietly under the tilt and begins to climb.
+
+  # -------------------------------------------------------------------------
+  # 6. The reveal.
+  # -------------------------------------------------------------------------
+  # The turn of the film. It gets a whole scene for one arriving image, and the
+  # only motion in it besides the last of the tilt is his flinch - the camera
+  # jolting back a few centimetres, which is what sells that someone is standing
+  # there seeing this. josy-bat.jpeg enters here and never leaves until scene 8.
+  # Her build language is restated in full: the morph is the exact moment the
+  # model is most likely to hand her a male frame.
+  - id: the-reveal
+    ref_images:
+      - josy-bat.jpeg
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the creature on the couch in <Picture 3>: a large fruit bat with the head of a small female French bulldog. She keeps the dog's narrow finely-boned head, petite delicate build, near-black brindle coat, white chest blaze, large upright ears, wide round dark eyes, short deeply wrinkled muzzle and loose pink lolling tongue, set on a long-limbed fox-furred bat's body, with broad leathery wings folded at her shoulders - dark grey-brown membranes stretched between long finger bones, a hooked thumb claw at each wrist - and clawed feet gripping the cushion beneath her.
+      <Subject 2> is the couch and living room in <Picture 1> and <Picture 3>: a low grey fabric couch with a taupe woven back, a pale blue-grey fern-print cushion against the backrest and a large teal-and-green monstera-print cushion across the front of the seat, in a holiday-home lounge with a wall of rain-beaded sliding glass doors, a wet patio and dark green trees beyond, and pale wood-look plank flooring.
+      <Subject 3> is the man whose eyes the camera occupies. He is never seen; the frame is his point of view at standing eye height, now sharply in focus through clean glasses.
+
+      summary:
+      [reference generation] The target video continues directly from <Picture 1>: the camera's upward tilt finishes and settles on the couch of <Subject 2> in the same framing the film opened on - but the small dog who was lying there is now <Subject 1>, a large fruit bat wearing her face, chin over the monstera cushion and tongue out, staring back. <Subject 3> flinches. <Picture 1> supplies the rising frame and the room, <Picture 2> her build, coat and face, <Picture 3> the wings and the pose.
+
+      retention_analysis:
+      <Picture 1> ([Shot 1] opening frame): fully_preserved - the sharply focused first-person view rising over the couch cushions, the plank flooring, the glass doors and the flat overcast daylight are retained at the start of the shot, before the tilt settles.
+      <Subject 1> (appears in [Shot 1]): partially_preserved - the narrow finely-boned brindle head, white chest blaze, large upright ears, wide round dark eyes, wrinkled muzzle, lolling pink tongue, folded leathery wing membranes and clawed feet on the monstera cushion of <Picture 3> are retained; her body lengthens beneath the wings into a fox-furred fruit bat's and she is markedly larger than the dog in <Picture 2>.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - the grey couch, taupe backrest, fern-print cushion, monstera-print cushion, glass doors and plank flooring of <Picture 1> and <Picture 3> are retained unchanged.
+
+      detailed_description:
+      The target video is photorealistic live-action footage in a natural handheld first-person style, shot on a wide lens at standing eye height in flat cool overcast daylight, in crisp hard focus with a shallow depth of field and fine film grain.
+      [Shot 1] The shot opens exactly on <Picture 1>, the frame still rising over the grey seat cushions of <Subject 2>. The tilt decelerates and settles into the film's opening framing - the couch square on, the fern cushion against the taupe backrest, the monstera cushion across the seat, the rain-beaded glass doors bright behind. On the cushion lies <Subject 1>, in exactly the place and pose the dog held: chin resting over the monstera print, wide round dark eyes on the lens, pink tongue hanging loose. But she is a large fruit bat now. Her head is still the narrow finely-boned brindle head of the small female French bulldog, white blaze at her chest, ears upright; below it a long fox-furred body fills the seat, and broad dark grey-brown leathery wings are folded at her shoulders, their membranes ribbed with long finger bones, a hooked thumb claw at each wrist. Her clawed feet flex once in the cushion. She blinks slowly. The camera jolts back a few centimetres and holds, unsteady.
+
+      overall_soundscape: Quiet indoor room tone throughout, with steady light rain on the glass doors and soft wind in the trees. A dry leathery creak as folded wing membranes shift, claws pulling at woven cushion fabric, and a close flat-faced snuffle. Behind the camera the man's breathing stops short and catches. No speech.
+
+      non_diegetic_music: The climbing low string note reaches its top and holds, joined by a single struck bell tone and a thin high tremolo of bowed strings that hangs on unresolved through the rest of the shot.
+
+  # =========================================================================
+  # DRAFT SCENE 5 - wings out, and a lap of the living room
+  # =========================================================================
+
+  # -------------------------------------------------------------------------
+  # 7. Taking flight.
+  # -------------------------------------------------------------------------
+  # The wing spread and the push-off are written as one continuous motion, not
+  # two beats - 3.75s will not hold a spread, a pause and a takeoff. The line is
+  # the only speech in the film, and it is his, off-screen, over the flight.
+  # "Josy?!" rather than the drafted "JOSY?!?": the guide standardises decorative
+  # and repeated punctuation, so the alarm rides in the delivery description
+  # instead.
+  - id: taking-flight
+    ref_images:
+      - josy-bat.jpeg
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the large fruit bat with the head of a small female French bulldog established in <Picture 1> and <Picture 3>: a narrow finely-boned near-black brindle head with a white chest blaze, large upright ears, wide round dark eyes, a short deeply wrinkled muzzle and a loose pink lolling tongue, on a petite long-limbed fox-furred bat's body with broad dark grey-brown leathery wings - membranes stretched between long finger bones, a hooked thumb claw at each wrist - and clawed feet.
+      <Subject 2> is the living room in <Picture 1>: a holiday-home lounge with a low grey couch carrying a pale blue-grey fern-print cushion and a large teal-and-green monstera-print cushion, a wall of rain-beaded sliding glass doors onto a wet patio and dark green trees, pale wood-look plank flooring, a cream drum-shaded floor lamp in the corner and plain grey walls, under flat overcast daylight.
+      <Subject 3> (S1) is the man whose eyes the camera occupies. He is never seen; the frame is his point of view at standing eye height, and he speaks off-screen in this shot.
+
+      summary:
+      [reference generation] The target video continues directly from <Picture 1>: <Subject 1> unfolds her wings and pushes off the couch in one motion, then flies a slow heavy circuit of <Subject 2> while the camera pans to follow her, and <Subject 3> (S1) shouts her name off-screen. <Picture 1> supplies the opening framing and the room, <Picture 2> her build and coat, <Picture 3> her wings and face.
+
+      retention_analysis:
+      <Picture 1> ([Shot 1] opening frame): fully_preserved - the first-person framing of the couch, the cushions, the glass doors, the plank flooring and the flat overcast daylight are retained at the start of the shot, before she leaves the cushion.
+      <Subject 1> (appears in [Shot 1]): partially_preserved - the narrow finely-boned brindle head, white chest blaze, large upright ears, wide round dark eyes, wrinkled muzzle, lolling tongue and the leathery hooked-thumb wing membranes of <Picture 3> are retained; the wings open to roughly four times her body length and beat, where <Picture 3> holds them folded and still.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - the grey couch, cushions, sliding glass doors, wet patio, treeline, plank flooring and cream floor lamp of <Picture 1> are retained as she crosses the room.
+
+      detailed_description:
+      The target video is photorealistic live-action footage in a natural handheld first-person style, shot on a wide lens at standing eye height in flat cool overcast daylight, in crisp hard focus with fine film grain.
+      [Shot 1] The shot opens exactly on <Picture 1>, <Subject 1> lying chin-down on the monstera cushion of <Subject 2> with her tongue out. Her clawed feet grip, her shoulders rise, and the folded wings sweep open in one continuous unfolding motion - the dark grey-brown membranes stretching taut and translucent against the bright rain-beaded glass doors, every long finger bone showing through - and carry straight on into a first heavy downbeat that lifts her clear of the cushion. She rises unhurriedly into the middle of the room, wings beating slow and deep, the loose fur of her fox-furred body swinging, her small brindle bulldog head turning to keep the lens in view and her pink tongue still hanging out. She banks in a wide slow arc past the cream floor lamp, the draught rocking its shade. The camera pans left with her at her own speed, handheld and unsteady, tilting up as she climbs. <Subject 3> (S1) shouts off-screen, in a startled adult male voice cracking on the vowel, <d>[English] Josy?!</d>
+
+      overall_soundscape: Quiet indoor room tone with light rain on the glass doors underneath. Claws release woven cushion fabric with a dry rip, then slow deep membrane wingbeats fill the room, each downstroke a soft leathery whump with a rush of displaced air, a lampshade trembling in the draught between beats. No other speech.
+
+      non_diegetic_music: The held tremolo strings break into a broad rising swell of full bowed strings and a low rolling timpani at a slow grand tempo, entering on the first wingbeat and growing steadily in width and volume through the flight, ducking briefly under the shout.
+
+  # =========================================================================
+  # DRAFT SCENE 6 - out of the door and gone
+  # =========================================================================
+
+  # -------------------------------------------------------------------------
+  # 8. Out into the wild.
+  # -------------------------------------------------------------------------
+  # The one scene that leaves the room, and the only one that needs
+  # centerparcs02. It carries an interior-to-exterior exposure shift as well as
+  # the move, so the action is again a single continuous line: she goes, the
+  # camera follows, she is gone. The empty sky at the end is the point - it is
+  # also what makes chaining into scene 9 unusable, hence the break there.
+  - id: out-into-the-wild
+    ref_images:
+      - josy-bat.jpeg
+      - centerparcs02-1280.jpg
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the large fruit bat with the head of a small female French bulldog established in <Picture 1> and <Picture 3>: a narrow finely-boned near-black brindle head with a white chest blaze, large upright ears, wide round dark eyes and a short deeply wrinkled muzzle, on a petite fox-furred bat's body with broad dark grey-brown leathery wings stretched between long finger bones, a hooked thumb claw at each wrist.
+      <Subject 2> is the garden in <Picture 4>: a wet paved patio with a wooden slatted table, folded white-framed sling chairs, a closed black parasol and a stone chiminea, opening onto rough dry lawn and a dense wall of tall green trees under a flat pale overcast sky.
+      <Subject 3> is the man whose eyes the camera occupies. He is never seen; the frame is his point of view, and he stays behind the open sliding door as the camera follows her out.
+
+      summary:
+      [reference generation] The target video continues directly from <Picture 1>: <Subject 1> banks hard across the room, slips out through the open sliding glass door into <Subject 2>, and climbs away over the treeline while the camera of <Subject 3> swings out after her and tilts up - until she shrinks against the pale overcast sky and is gone. <Picture 1> supplies the opening framing and the room, <Picture 2> her build and coat, <Picture 3> her wings and face, <Picture 4> the garden.
+
+      retention_analysis:
+      <Picture 1> ([Shot 1] opening frame): fully_preserved - the first-person view of the living room interior, the glass doors and the flat overcast daylight are retained at the start of the shot, before the camera follows her outside.
+      <Subject 1> (appears in [Shot 1]): partially_preserved - the narrow finely-boned brindle head, white chest blaze, large upright ears, wrinkled muzzle and leathery hooked-thumb wing membranes of <Picture 3> are retained; the wings are fully spread and beating and she is seen at increasing distance rather than perched.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - the wet paved patio, slatted wooden table, folded white sling chairs, closed black parasol, stone chiminea, dry lawn, tall treeline and flat pale overcast sky of <Picture 4> are retained.
+
+      detailed_description:
+      The target video is photorealistic live-action footage in a natural handheld first-person style, shot on a wide lens in flat cool overcast daylight, in crisp hard focus with fine film grain, the exposure lifting as the camera moves from the dim interior out into open daylight.
+      [Shot 1] The shot opens on <Picture 1>, <Subject 1> mid-flight inside the lounge, wings wide. She banks hard and drops into a fast straight line for the open sliding glass door, folding her wingtips to clear the frame, and is out. The camera lurches after her, swinging through the doorway into <Subject 2> - wet paved patio, the slatted wooden table with its folded white sling chairs and closed black parasol, the stone chiminea beyond, dry lawn running to a dense wall of tall green trees. She crosses the patio low and fast, one wingtip almost brushing the parasol, then pitches up and climbs, wings beating deep and slow, over the lawn and up toward the treeline. The camera tilts up to hold her and loses ground; she clears the treetops, shrinking to a black silhouette against flat pale sky, then to a mark, then to nothing. The camera drifts, searching empty overcast sky, and stops.
+
+      overall_soundscape: Interior room tone opens out into wet garden ambience - steady light rain on paving and leaves, wind moving through tall trees, a distant crow. Slow leathery wingbeats recede and thin with distance, a parasol fabric snapping once in her draught. Close breathing behind the camera, fast and shallow. No speech.
+
+      non_diegetic_music: The full bowed strings and timpani reach their widest and brightest as she clears the trees, then fall away almost at once, leaving one high sustained string note that thins to silence over the empty sky.
+
+  # =========================================================================
+  # DRAFT SCENE 7 - back inside, asleep, and awake
+  # =========================================================================
+
+  # -------------------------------------------------------------------------
+  # 9. Waking.
+  # -------------------------------------------------------------------------
+  # chain_from_previous: false. The hard cut out of the dream, and the reason
+  # this file has two clean-plate scenes: the shot has to land on the film's
+  # opening framing with nothing of the flight clinging to it. The first two
+  # thirds are deliberately near-motionless - a sleeping dog and rain - so the
+  # wake at the end has something to break.
+  - id: waking
+    chain_from_previous: false
+    ref_images:
+      - centerparcs01-1280.jpg
+      - josy-tongue.jpeg
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the small female French bulldog in <Picture 1> and <Picture 3>: compact and petite, with a narrow finely-boned head, a slender neck, and a light delicate frame, a short dark brindle coat that reads almost black, faint lighter brindle striping along her flanks, a white blaze covering the centre of her chest, large upright bat ears, wide round dark eyes, a short deeply wrinkled muzzle, and a flat black nose. She is an ordinary dog with no wings of any kind.
+      <Subject 2> is the couch in <Picture 3>: a low grey fabric couch with a taupe woven back, a pale blue-grey fern-print cushion propped against the backrest, and a large tropical cushion printed with teal and green monstera leaves lying flat across the front of the seat.
+      <Subject 3> is the living room in <Picture 2>: a holiday-home lounge with a wall of floor-to-ceiling sliding glass doors, a wet paved patio and dense green trees beyond them under flat overcast daylight, pale wood-look plank flooring, a cream drum-shaded floor lamp in the corner, and plain grey walls.
+
+      summary:
+      [reference generation] The target video is a locked-off shot of <Subject 1> asleep on <Subject 2> in <Subject 3>, chin over the monstera cushion, breathing slowly - and then waking with a start, her head snapping up off the cushion and her eyes flying open. <Picture 1> supplies her build and coat, <Picture 2> the room, <Picture 3> the couch, the cushions and her position on them.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the petite finely-boned build, near-black brindle coat, white chest blaze, large upright bat ears, wide round dark eyes and short wrinkled muzzle of <Picture 1> and <Picture 3> are retained; her eyes are closed for the first part of the shot and her tongue is tucked in.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - the low grey couch, the taupe woven backrest, the blue-grey fern-print cushion and the teal-and-green monstera cushion of <Picture 3> are retained, as is her position lying along the seat with her chin over the monstera print.
+      <Subject 3> (appears in [Shot 1]): partially_preserved - the wall of sliding glass doors, the patio and treeline beyond, the pale wood-look flooring, the cream floor lamp and the flat overcast daylight of <Picture 2> are retained; its own furniture is replaced by <Subject 2>.
+
+      detailed_description:
+      The target video is photorealistic live-action footage, quiet and still, shot on a wide lens at seated eye height square on to the couch in flat cool overcast daylight, with a shallow depth of field and fine film grain.
+      [Shot 1] A static locked-off shot of <Subject 2> in <Subject 3>, the rain-beaded glass doors bright behind it, the fern cushion against the taupe backrest and the monstera cushion across the seat. <Subject 1>, the small compact female French bulldog with the narrow finely-boned head, slender neck, white chest blaze and large upright bat ears, lies asleep on her belly along the cushion, chin resting over the monstera print, eyes shut, tongue tucked away, her small ribcage rising and falling in a slow even rhythm. One ear twitches. Her front paw flexes once against the fabric and goes still. Nothing else in the frame moves; rain runs down the glass behind her. Then she wakes all at once - her head snaps up off the cushion, both eyes flying wide open, ears springing upright, her whole small body going rigid and taut on the seat. She holds absolutely still, staring off past the camera, chest going fast.
+
+      overall_soundscape: Quiet indoor room tone throughout, with steady light rain on the glass doors and soft wind in the trees. Slow deep sleeping breaths through a flat face, one small dreaming whimper, a claw scratching once on woven fabric. On the wake, a sharp indrawn snort and fast shallow panting. No speech.
+
+      non_diegetic_music: Near silence for most of the shot - one soft sustained low string note held very quietly under the rain - then a single sharp pizzicato note landing exactly on the head snap, leaving the low note ringing alone.
+
+  # -------------------------------------------------------------------------
+  # 10. Just a dream.
+  # -------------------------------------------------------------------------
+  # The densest shot in the film: startle, scan, relief, settle. It survives at
+  # 90 frames because the camera never moves and every beat is a head or an
+  # eyelid. The scan is written as left-then-right with named landmarks (the
+  # glass doors, the corner lamp) so it reads as looking FOR something rather
+  # than as an idle head wobble - the whole gag is that she is checking whether
+  # the bat is still in the room.
+  - id: just-a-dream
+    video_frames: 100         # ~4.46s actual - four beats. Do not raise: 110 -> 124 frames = DeviceLost.
+    ref_images:
+      - josy-tongue.jpeg
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the small female French bulldog established in <Picture 1>, <Picture 2> and <Picture 3>: compact and petite, with a narrow finely-boned head, a slender neck and a light delicate frame, a near-black brindle coat, a white blaze on the centre of her chest, large upright bat ears, wide round dark eyes, a short deeply wrinkled muzzle and a flat black nose. She is an ordinary dog with no wings of any kind.
+      <Subject 2> is the couch and living room in <Picture 1> and <Picture 3>: a low grey fabric couch with a taupe woven back, a pale blue-grey fern-print cushion against the backrest and a large teal-and-green monstera-print cushion across the front of the seat, in a holiday-home lounge with a wall of rain-beaded floor-to-ceiling sliding glass doors, a wet patio and dark green trees beyond, pale wood-look plank flooring and a cream drum-shaded floor lamp in the corner, under flat overcast daylight.
+
+      summary:
+      [reference generation] The target video continues directly from <Picture 1>: <Subject 1>, just woken and rigid on <Subject 2>, whips her head left and then right to search the empty room, finds nothing, softens all over as the fright leaves her, and lowers her chin back onto the monstera cushion to sleep again. <Picture 1> supplies the exact framing and light, <Picture 2> her build and coat, <Picture 3> the couch and cushions.
+
+      retention_analysis:
+      <Picture 1> ([Shot 1] opening frame): fully_preserved - the locked-off framing of the couch, her raised head and wide eyes, the rain-beaded glass doors, the flooring and the flat overcast daylight are retained from the first frame onward.
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the petite finely-boned build, near-black brindle coat, white chest blaze, large upright bat ears, wide round dark eyes and short wrinkled muzzle are retained.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - the grey couch, taupe backrest, fern-print cushion, monstera-print cushion, sliding glass doors and plank flooring of <Picture 1> and <Picture 3> are retained unchanged; the room stays empty throughout.
+
+      detailed_description:
+      The target video is photorealistic live-action footage, quiet and still, shot on a wide lens at seated eye height square on to the couch in flat cool overcast daylight, with a shallow depth of field and fine film grain.
+      [Shot 1] The shot opens exactly on <Picture 1>: a static locked-off view of <Subject 1>, the small compact female French bulldog with the narrow finely-boned head, slender neck, white chest blaze and large upright bat ears, sitting bolt upright on the monstera cushion of <Subject 2> with her eyes wide and her ears high. She whips her head to the left, scanning along the bright rain-beaded glass doors, her eyes darting and the loose skin of her cheek swinging with the movement. She whips it back to the right and up, checking the corner where the cream floor lamp stands. The room is empty; the ceiling is empty. Her ears come down by degrees. The tension goes out of her shoulders, her eyes narrow to soft slits, and she blows a long slow breath out through her nose, cheeks puffing. She lowers her chin back onto the monstera print in one slow settling motion, her pink tongue slipping out over her lower jaw, shuffles once into the cushion, and closes her eyes.
+
+      overall_soundscape: Quiet indoor room tone throughout, with steady light rain on the glass doors and soft wind in the trees. Fast shallow panting slowing beat by beat, ears flapping softly against her skull on the second turn, a long relieved snort out through a flat nose, and a rustle of woven fabric as she settles. No speech.
+
+      non_diegetic_music: Sparse plucked strings tick under the two head turns and stop, then one warm sustained cello note enters as her shoulders drop and resolves gently downward, joined by the quiet fingerpicked acoustic guitar figure from the opening, which plays out unhurried as she closes her eyes.
