@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Drafts · moviemakr{% endblock %}
+{% block body %}
+
+<h1>Drafts</h1>
+<p class="hint">
+  Plain prose, not scripts. A draft is what you hand to
+  <code>h3-prompt-writing</code> later to get a scene-by-scene YAML — write the
+  beats here, expand them at a terminal.
+</p>
+
+<form method="post" action="/drafts" class="inline-form">
+  <input type="text" name="title" placeholder="New draft title" required>
+  <button type="submit">create</button>
+</form>
+
+{% if not drafts %}
+  <p class="empty">Nothing in <code>{{ workspace.drafts_dir }}</code> yet.</p>
+{% endif %}
+
+<ul class="cards">
+  {% for draft in drafts %}
+  <li class="card">
+    <a class="card-title" href="/drafts/{{ draft.slug }}">{{ draft.title }}</a>
+    <div class="card-meta">
+      <code>{{ draft.slug }}.md</code>
+      {% if draft.modified %} · {{ draft.modified.strftime("%d %b %H:%M") }}{% endif %}
+    </div>
+    <p class="excerpt">{{ draft.excerpt }}</p>
+  </li>
+  {% endfor %}
+</ul>
+
+{% endblock %}

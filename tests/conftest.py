@@ -69,11 +69,27 @@ def model_root(tmp_path: Path) -> Path:
     return root
 
 
+@pytest.fixture(autouse=True)
+def _no_ambient_workspace(monkeypatch):
+    """A developer's own $MOVIEMAKR_WORKSPACE must not leak into the suite."""
+    from moviemakr.layout import WORKSPACE_ENV
+
+    monkeypatch.delenv(WORKSPACE_ENV, raising=False)
+
+
 @pytest.fixture
 def project_root(tmp_path: Path) -> Path:
+    """A synthetic workspace root: the data dirs, with no code checkout nearby."""
     root = tmp_path / "project"
     (root / "assets").mkdir(parents=True)
     return root
+
+
+@pytest.fixture
+def workspace(project_root: Path):
+    from moviemakr.layout import Workspace
+
+    return Workspace.at(project_root)
 
 
 @pytest.fixture
@@ -159,12 +175,73 @@ def write_script(project_root: Path, base_script: dict):
 
 
 @pytest.fixture
-def load(write_script, project_root: Path):
+def web_workspace(tmp_path, model_root, base_script):
+    """A populated workspace for the web tests.
+
+    Nested scripts, one that cannot load, a draft, two assets, and one script
+    with a rendered clip plus a finished movie. Still hermetic: the "media" is
+    plain bytes and the clip carries a stored probe in state.json, so nothing
+    here reaches ffprobe.
+    """
+    import json
+
+    from moviemakr.layout import Workspace
+
+    root = tmp_path / "ws"
+    for sub in ("scripts/h3", "assets", "drafts"):
+        (root / sub).mkdir(parents=True)
+
+    (root / "assets" / "josy-reference.jpg").write_bytes(b"anchor-bytes")
+    (root / "assets" / "unused.png").write_bytes(b"unused-bytes")
+    (root / "drafts" / "picnic.md").write_text(
+        "# Beach picnic\n\nJosy finds a sandwich. Ends on a wave.\n")
+
+    def script(name, anchors):
+        return deep_merge(base_script, {
+            "name": name,
+            "continuity": {"anchors": anchors, "chain_from_previous": True},
+            "scenes": [
+                {"id": "opening", "prompt": "Scene one.", "chain_from_previous": False},
+                {"id": "middle", "prompt": "Scene two."},
+            ],
+        })
+
+    (root / "scripts" / "simple.yaml").write_text(
+        yaml.safe_dump(script("simple", []), sort_keys=False))
+    (root / "scripts" / "h3" / "beach.yaml").write_text(
+        yaml.safe_dump(script("beach drive", ["josy-reference.jpg"]), sort_keys=False))
+    # Mirrors scripts/h3/josy-house-party.yaml: an anchor that is not in assets/.
+    (root / "scripts" / "h3" / "broken.yaml").write_text(
+        yaml.safe_dump(script("broken", ["does-not-exist.jpg"]), sort_keys=False))
+
+    run_dir = root / "renders" / "simple"
+    (run_dir / "scenes").mkdir(parents=True)
+    (run_dir / "logs").mkdir(parents=True)
+    (run_dir / "scenes" / "001-opening.webm").write_bytes(b"clip-bytes")
+    (run_dir / "simple.mp4").write_bytes(b"movie-bytes")
+    (run_dir / "logs" / "001-opening.attempt1.log").write_text("rendering\ndone\n")
+    # A stored probe keeps `scene_table` away from ffprobe.
+    (run_dir / "state.json").write_text(json.dumps({
+        "scenes": {
+            "opening": {
+                "state": "rendered",
+                "elapsed": 902.5,
+                "probe": {"frames": 90, "duration": 3.75, "has_audio": True,
+                          "width": 540, "height": 960},
+            }
+        }
+    }))
+
+    return Workspace.at(root)
+
+
+@pytest.fixture
+def load(write_script, workspace):
     """Write a script and load it, returning the Script object."""
     import moviemakr as M
 
     def _load(overrides: dict | None = None, filename: str = "test.yaml"):
-        return M.load_script(_resolve(write_script(overrides, filename)), project_root)
+        return M.load_script(_resolve(write_script(overrides, filename)), workspace)
 
     def _resolve(path: Path) -> Path:
         return path.resolve()

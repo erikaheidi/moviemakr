@@ -29,11 +29,12 @@ from .docker import (
     sd_args,
 )
 from .errors import ConfigError, check_keys, suggest
-from .layout import RunLayout, slugify
+from .layout import RunLayout, Workspace, slugify
 from .media import CONTAINERS, NormalizeSpec, extract_last_frame, probe_clip
 from .render import RenderOptions, SceneJob, render, select_scenes
 from .report import fmt_duration, print_summary
 from .state import load_state, save_state
+from .status import scene_rows
 
 __version__ = "0.2.0"
 
@@ -49,6 +50,7 @@ __all__ = [
     "SceneJob",
     "SceneSettings",
     "Script",
+    "Workspace",
     "__version__",
     "assemble",
     "check_gpu",
@@ -67,6 +69,7 @@ __all__ = [
     "probe_clip",
     "render",
     "save_state",
+    "scene_rows",
     "sd_args",
     "select_scenes",
     "slugify",

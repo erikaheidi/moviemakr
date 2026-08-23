@@ -17,7 +17,7 @@ from typing import Any, ClassVar
 import yaml
 
 from .errors import ConfigError, check_keys
-from .layout import RunLayout, slugify
+from .layout import RunLayout, Workspace, slugify
 from .media import CONTAINERS
 
 TOP_KEYS = frozenset({"name", "model", "docker", "defaults", "continuity", "output", "scenes"})
@@ -180,7 +180,7 @@ class OutputConfig:
 class Script:
     name: str
     path: Path
-    root: Path  # project root (where the moviemakr package lives)
+    workspace: Workspace  # data root the assets and renders came from
     model_files: dict[str, Path]
     docker: DockerConfig
     output: OutputConfig
@@ -251,7 +251,7 @@ def _resolve_ref_image(rel: str, what: str, layout: RunLayout) -> Path:
     return host
 
 
-def load_script(script_path: Path, project_root: Path) -> Script:
+def load_script(script_path: Path, workspace: Workspace) -> Script:
     if not script_path.is_file():
         raise ConfigError(f"script not found: {script_path}")
     with script_path.open() as fh:
@@ -301,9 +301,9 @@ def load_script(script_path: Path, project_root: Path) -> Script:
         raise ConfigError("output.audio must be 'keep' or 'strip'")
 
     # --- layout, built before scenes so refs can be checked against the mounts ---
-    assets_dir = project_root / "assets"
+    assets_dir = workspace.assets_dir
     layout = RunLayout.build(
-        run_dir=project_root / "renders" / slugify(name),
+        run_dir=workspace.renders_dir / slugify(name),
         model_root=model_root,
         assets_dir=assets_dir,
         name_slug=slugify(name),
@@ -380,7 +380,7 @@ def load_script(script_path: Path, project_root: Path) -> Script:
     return Script(
         name=name,
         path=script_path,
-        root=project_root,
+        workspace=workspace,
         model_files=model_files,
         docker=docker,
         output=output,

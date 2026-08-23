@@ -1,4 +1,9 @@
-"""The run directory, and the host <-> container path model.
+"""The workspace, the run directory, and the host <-> container path model.
+
+`Workspace` is the data root: the directory holding `scripts/`, `assets/`,
+`drafts/` and `renders/`. It is deliberately separate from the code checkout so
+the package can be installed anywhere and two instances can run against
+different content.
 
 The container sees exactly three mounts. `RunLayout` owns both halves of that
 model: where every artefact lands on the host, and how a host path is spelled
@@ -10,6 +15,7 @@ leaf that the rest of the package can depend on freely.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,6 +24,8 @@ from .errors import ConfigError
 CONTAINER_MODELS = "/models"
 CONTAINER_ASSETS = "/assets"
 CONTAINER_OUT = "/out"
+
+WORKSPACE_ENV = "MOVIEMAKR_WORKSPACE"
 
 # sd-cli always writes WebM, whatever container the finished movie uses.
 CLIP_SUFFIX = "webm"
@@ -31,6 +39,63 @@ def slugify(text: str) -> str:
     while "--" in out:
         out = out.replace("--", "-")
     return out.strip("-") or "scene"
+
+
+@dataclass(frozen=True, slots=True)
+class Workspace:
+    """The data root: scripts, assets, drafts and renders.
+
+    Held separately from the code so the package can be installed anywhere and
+    several instances can run against different content. `RunLayout` still takes
+    its three mount bases explicitly - this type only decides where they are.
+    """
+
+    root: Path
+
+    @classmethod
+    def at(cls, root: Path) -> "Workspace":
+        return cls(root=Path(root).expanduser().resolve())
+
+    @classmethod
+    def resolve(cls, explicit: Path | None = None, *, default: Path | None = None) -> "Workspace":
+        """Pick the workspace: explicit argument, then $MOVIEMAKR_WORKSPACE, then `default`.
+
+        `default` is the caller's fallback (the CLI passes the repo root, which
+        is where the data used to live), so an existing invocation with neither
+        the flag nor the env var keeps working.
+        """
+        chosen = explicit
+        if chosen is None:
+            from_env = os.environ.get(WORKSPACE_ENV)
+            chosen = Path(from_env) if from_env else default
+        if chosen is None:
+            raise ConfigError(
+                f"no workspace: pass --workspace or set {WORKSPACE_ENV}"
+            )
+        workspace = cls.at(chosen)
+        if not workspace.root.is_dir():
+            raise ConfigError(f"workspace is not a directory: {workspace.root}")
+        return workspace
+
+    @property
+    def scripts_dir(self) -> Path:
+        return self.root / "scripts"
+
+    @property
+    def assets_dir(self) -> Path:
+        return self.root / "assets"
+
+    @property
+    def drafts_dir(self) -> Path:
+        return self.root / "drafts"
+
+    @property
+    def renders_dir(self) -> Path:
+        return self.root / "renders"
+
+    @property
+    def cache_dir(self) -> Path:
+        return self.root / ".cache"
 
 
 @dataclass(frozen=True, slots=True)

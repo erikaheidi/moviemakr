@@ -146,9 +146,22 @@ def test_keyboard_interrupt_is_exit_130(tools_present, capsys, write_script,
     assert "interrupted" in capsys.readouterr().err
 
 
-def test_project_root_is_the_repo_not_the_package():
-    """The launcher used to define this; moving it into the package shifts it down one."""
-    from moviemakr import cli
+def test_workspace_flag_beats_the_default(tools_present, capsys, write_script,
+                                          project_root, tmp_path):
+    """--workspace overrides the fallback root, so the run dir moves with it."""
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "assets").mkdir(parents=True)
+    path = write_script()
 
-    assert cli.PROJECT_ROOT == Path(cli.__file__).resolve().parent.parent
-    assert (cli.PROJECT_ROOT / "moviemakr.py").is_file()
+    assert main(["status", "--workspace", str(elsewhere), str(path)],
+                project_root=project_root) == 0
+    # The status table prints the run dir's logs path; the movie lives under it.
+    assert not (project_root / "renders").exists()
+
+
+def test_workspace_must_exist(tools_present, capsys, write_script, project_root, tmp_path):
+    path = write_script()
+    code = main(["status", "--workspace", str(tmp_path / "nope"), str(path)],
+                project_root=project_root)
+    assert code == 2
+    assert "workspace is not a directory" in capsys.readouterr().err

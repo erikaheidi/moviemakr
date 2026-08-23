@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Assets · moviemakr{% endblock %}
+{% block body %}
+
+<h1>Assets</h1>
+<p class="hint">
+  Reference images must live here — the container mounts <code>assets/</code> at
+  <code>/assets</code>, and a script may only reference images inside it.
+</p>
+
+{% if uploaded %}<p class="flash">Uploaded {{ uploaded }}</p>{% endif %}
+{% if error %}<p class="flash flash-bad">{{ error }}</p>{% endif %}
+
+<form method="post" action="/assets" enctype="multipart/form-data" class="upload">
+  <input type="file" name="files" accept="image/jpeg,image/png,image/webp" multiple required>
+  <label class="check">
+    <input type="checkbox" name="keep_full_size" value="true">
+    keep full size (default resizes the long edge to 1280)
+  </label>
+  <button type="submit">upload</button>
+</form>
+
+{% if not assets %}
+  <p class="empty">Nothing in <code>{{ workspace.assets_dir }}</code> yet.</p>
+{% endif %}
+
+<ul class="grid">
+  {% for asset in assets %}
+  <li class="tile">
+    <a href="/assets/file/{{ asset.name }}">
+      <img src="/assets/thumb/{{ asset.name }}" alt="{{ asset.name }}" loading="lazy">
+    </a>
+    <div class="tile-meta">
+      <code>{{ asset.name }}</code>
+      <span>{{ asset.size_h }}</span>
+      {% if asset.used_by %}
+        <span class="pill pill-good" title="{{ asset.used_by|join(', ') }}">
+          used by {{ asset.used_by|length }}
+        </span>
+      {% else %}
+        <span class="pill">unused</span>
+      {% endif %}
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+
+{% endblock %}

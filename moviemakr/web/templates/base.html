@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>{% block title %}moviemakr{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🎬</text></svg>">
+</head>
+<body>
+  <header>
+    <nav>
+      <a href="/" class="brand">moviemakr</a>
+      <a href="/">scripts</a>
+      <a href="/drafts">drafts</a>
+      <a href="/assets">assets</a>
+    </nav>
+  </header>
+
+  <main>
+    {% block body %}{% endblock %}
+  </main>
+
+  <footer>
+    <code>{{ workspace.root }}</code>
+    <p>Renders run on the CLI over ssh. This view is read-only toward rendering.</p>
+  </footer>
+</body>
+</html>

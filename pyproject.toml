@@ -10,7 +10,18 @@ requires-python = ">=3.11"
 dependencies = ["PyYAML>=6"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+# `moviemakr serve` only. The core CLI must keep working without these, which is
+# why moviemakr/web/app.py is the single module that imports FastAPI.
+# starlette>=0.45 is a hard floor, not a preference: FileResponse only learned
+# HTTP Range there, and without Range iOS cannot scrub a video.
+web = [
+  "fastapi>=0.115.6",
+  "starlette>=0.45",
+  "uvicorn>=0.30",
+  "jinja2>=3.1",
+  "python-multipart>=0.0.9",
+]
+dev = ["pytest>=8", "httpx>=0.27"]
 
 [project.scripts]
 moviemakr = "moviemakr.cli:main"

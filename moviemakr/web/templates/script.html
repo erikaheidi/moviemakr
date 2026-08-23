@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}{{ script.name }} · moviemakr{% endblock %}
+{% block body %}
+
+<h1>{{ script.name }}</h1>
+<p class="stats">
+  <code>{{ key }}</code> ·
+  {{ script.scenes|length }} scenes ·
+  {{ script.primary_size[0] }}×{{ script.primary_size[1] }} @ {{ script.fps }}fps ·
+  <a href="/scripts/{{ key }}/raw">yaml</a>
+</p>
+
+{% if movie %}
+<section>
+  <video controls playsinline preload="metadata" src="/scripts/{{ key }}/movie"></video>
+  <p class="card-actions">
+    <a href="/scripts/{{ key }}/movie?download=1" download>download movie ({{ movie_size }})</a>
+  </p>
+</section>
+{% else %}
+<p class="empty">No assembled movie yet — <code>moviemakr assemble {{ key }}</code> once the scenes are rendered.</p>
+{% endif %}
+
+<section>
+  <div class="section-head">
+    <h2>Scenes</h2>
+    <label class="live">
+      <input type="checkbox" id="live-toggle"> live
+    </label>
+  </div>
+  <div id="scene-table" data-src="/scripts/{{ key }}/scenes">
+    {% include "_scenes.html" %}
+  </div>
+  <p class="hint">
+    <b>stale</b> means the clip exists but the script changed since it rendered —
+    a render would redo it.
+  </p>
+</section>
+
+<section>
+  <h2>Prompts</h2>
+  {% for scene in scenes %}
+  <details>
+    <summary>{{ scene.index }}. {{ scene.id }}
+      {%- if scene.refs %} <span class="card-meta">refs: {{ scene.refs|join(", ") }}</span>{% endif %}
+    </summary>
+    <pre class="prompt">{{ scene.prompt }}</pre>
+  </details>
+  {% endfor %}
+</section>
+
+{% if logs %}
+<section>
+  <h2>Logs</h2>
+  <ul class="plain">
+    {% for log in logs %}
+    <li>
+      <a href="/scripts/{{ key }}/log/{{ log.name }}">{{ log.name }}</a>
+      <span class="card-meta">{{ log.size }}{% if log.modified %} · {{ log.modified.strftime("%d %b %H:%M") }}{% endif %}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<script>
+// The one dynamic thing on the site: while a render runs over ssh, state.json
+// changes under us. Poll the table fragment rather than reloading the page, so
+// the video keeps playing and the scroll position holds. Off by default -
+// this is usually read on a phone.
+(function () {
+  var box = document.getElementById("scene-table");
+  var toggle = document.getElementById("live-toggle");
+  var timer = null;
+
+  function refresh() {
+    fetch(box.dataset.src, { headers: { "Accept": "text/html" } })
+      .then(function (r) { return r.ok ? r.text() : null; })
+      .then(function (html) { if (html) box.innerHTML = html; })
+      .catch(function () { /* a dropped tailnet link is not worth reporting */ });
+  }
+
+  toggle.addEventListener("change", function () {
+    if (toggle.checked) {
+      refresh();
+      timer = setInterval(refresh, 5000);
+    } else {
+      clearInterval(timer);
+      timer = null;
+    }
+  });
+
+  // Stop polling when the tab is backgrounded; phones keep timers alive.
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden && timer) { clearInterval(timer); timer = null; }
+    else if (!document.hidden && toggle.checked && !timer) { timer = setInterval(refresh, 5000); }
+  });
+})();
+</script>
+
+{% endblock %}

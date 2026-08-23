@@ -64,9 +64,9 @@ def test_no_scenes(load):
         load({"scenes": []})
 
 
-def test_missing_script_file(project_root):
+def test_missing_script_file(project_root, workspace):
     with pytest.raises(ConfigError, match="script not found"):
-        load_script(project_root / "nope.yaml", project_root)
+        load_script(project_root / "nope.yaml", workspace)
 
 
 def test_model_root_must_be_a_directory(load, tmp_path):
