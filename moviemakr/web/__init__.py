@@ -23,7 +23,28 @@ from ..layout import WORKSPACE_ENV, Workspace
 if TYPE_CHECKING:  # pragma: no cover
     from fastapi import FastAPI
 
-__all__ = ["create_app", "run_server"]
+__all__ = ["create_app", "missing_modules", "run_server"]
+
+# What the `web` extra installs, by import name. Because every import of these
+# is deferred, importing this module always succeeds - so a caller cannot learn
+# the extra is absent by catching ImportError around the import, and has to ask.
+# `starlette` is omitted: fastapi depends on it, so it is never the one missing.
+REQUIRED_MODULES = ("fastapi", "uvicorn", "jinja2", "multipart")
+
+
+def missing_modules() -> list[str]:
+    """Which of the extra's modules are not importable. Empty means ready."""
+    from importlib.util import find_spec
+
+    missing = []
+    for name in REQUIRED_MODULES:
+        try:
+            found = find_spec(name) is not None
+        except (ImportError, ValueError):
+            found = False
+        if not found:
+            missing.append(name)
+    return missing
 
 
 def create_app(workspace: Workspace) -> "FastAPI":

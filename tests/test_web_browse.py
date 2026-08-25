@@ -34,6 +34,22 @@ def test_a_broken_script_is_a_row_not_an_exception(web_workspace):
     assert rows["simple.yaml"].error is None
 
 
+def test_a_syntactically_broken_script_is_a_row_too(web_workspace):
+    """The other kind of broken: unparseable YAML, not a bad reference.
+
+    `browse` only catches ConfigError, so this passes only while `load_script`
+    converts YAMLError into one.
+    """
+    (web_workspace.scripts_dir / "unparseable.yaml").write_text(
+        "this: [is: not: valid: yaml\n  bad indent\n")
+    rows = {r.key: r for r in B.script_rows(web_workspace)}
+    row = rows["unparseable.yaml"]
+    assert row.error is not None
+    assert "invalid YAML" in row.error
+    assert row.progress == "invalid"
+    assert rows["simple.yaml"].error is None
+
+
 def test_row_name_comes_from_the_yaml_not_the_filename(web_workspace):
     rows = {r.key: r for r in B.script_rows(web_workspace)}
     assert rows["h3/beach.yaml"].name == "beach drive"

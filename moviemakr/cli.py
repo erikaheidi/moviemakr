@@ -106,11 +106,17 @@ def check_tools(command: str, dry_run: bool) -> int | None:
 
 
 def cmd_serve(args: argparse.Namespace, workspace: Workspace) -> int:
-    """Imported lazily: the core CLI must work without FastAPI installed."""
-    try:
-        from .web import run_server
-    except ImportError as exc:
-        print(f"error: the web extra is not installed ({exc})", file=sys.stderr)
+    """The core CLI must work without FastAPI installed, so ask before serving.
+
+    `moviemakr.web` imports only the stdlib and defers the rest, so importing it
+    proves nothing about the extra - the ImportError would otherwise surface as
+    a traceback from inside uvicorn, well past any guard here.
+    """
+    from .web import missing_modules, run_server
+
+    if missing := missing_modules():
+        print(f"error: the web extra is not installed (missing {', '.join(missing)})",
+              file=sys.stderr)
         print("  pip install 'moviemakr[web]'", file=sys.stderr)
         return 2
     return run_server(workspace, host=args.host, port=args.port, reload=args.reload)

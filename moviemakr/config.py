@@ -255,7 +255,13 @@ def load_script(script_path: Path, workspace: Workspace) -> Script:
     if not script_path.is_file():
         raise ConfigError(f"script not found: {script_path}")
     with script_path.open() as fh:
-        raw = yaml.safe_load(fh) or {}
+        # A syntax error has to become a ConfigError like every other bad
+        # script: callers only guard that one type, and an escaping YAMLError
+        # is a traceback on the CLI and a 500 that takes the web index down.
+        try:
+            raw = yaml.safe_load(fh) or {}
+        except yaml.YAMLError as exc:
+            raise ConfigError(f"invalid YAML in {script_path}: {exc}") from None
     if not isinstance(raw, dict):
         raise ConfigError(f"script must be a mapping at the top level: {script_path}")
     check_keys("top level", raw, TOP_KEYS)

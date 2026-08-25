@@ -165,3 +165,47 @@ def test_workspace_must_exist(tools_present, capsys, write_script, project_root,
                 project_root=project_root)
     assert code == 2
     assert "workspace is not a directory" in capsys.readouterr().err
+
+
+# --- serve -----------------------------------------------------------------
+
+
+def test_serve_reports_a_missing_web_extra_instead_of_crashing(
+    tools_present, monkeypatch, capsys, tmp_path
+):
+    """The hint is only reachable if the check does not rely on ImportError.
+
+    `moviemakr.web` imports nothing but the stdlib, so `from .web import
+    run_server` always succeeds - uvicorn is imported inside `run_server`, and
+    the ModuleNotFoundError used to escape past the guard as a traceback.
+    """
+    import moviemakr.web as W
+
+    monkeypatch.setattr(W, "missing_modules", lambda: ["uvicorn"])
+    code = main(["serve", "--workspace", str(tmp_path)])
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "web extra is not installed" in err
+    assert "missing uvicorn" in err
+    assert "pip install 'moviemakr[web]'" in err
+
+
+def test_serve_starts_when_the_extra_is_present(tools_present, monkeypatch, tmp_path):
+    import moviemakr.web as W
+
+    seen = {}
+    monkeypatch.setattr(W, "missing_modules", lambda: [])
+    monkeypatch.setattr(W, "run_server", lambda ws, **kw: seen.update(ws=ws, **kw) or 0)
+    assert main(["serve", "--workspace", str(tmp_path), "--port", "9001"]) == 0
+    assert seen["port"] == 9001
+    assert seen["host"] == "127.0.0.1"
+    assert seen["reload"] is False
+    assert seen["ws"].root == tmp_path.resolve()
+
+
+def test_missing_modules_is_empty_when_the_extra_is_installed():
+    """Sanity check on the probe itself, in the venv that has the extra."""
+    pytest.importorskip("fastapi", reason="install the 'web' extra to run this")
+    from moviemakr.web import missing_modules
+
+    assert missing_modules() == []

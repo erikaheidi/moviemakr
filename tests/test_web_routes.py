@@ -38,6 +38,32 @@ def test_index_flags_the_unloadable_script_instead_of_500ing(client):
     assert "1 invalid" in response.text
 
 
+def test_unparseable_yaml_does_not_500_the_index(client, web_workspace):
+    """A syntax error anywhere under scripts/ used to take the whole index out."""
+    (web_workspace.scripts_dir / "unparseable.yaml").write_text(
+        "this: [is: not: valid: yaml\n  bad indent\n")
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "unparseable.yaml" in response.text
+    assert "2 invalid" in response.text
+
+
+def test_unparseable_yaml_detail_is_422(client, web_workspace):
+    (web_workspace.scripts_dir / "unparseable.yaml").write_text(
+        "this: [is: not: valid: yaml\n  bad indent\n")
+    response = client.get("/scripts/unparseable.yaml")
+    assert response.status_code == 422
+    assert "invalid YAML" in response.text
+
+
+def test_unparseable_yaml_raw_still_serves(client, web_workspace):
+    """You have to be able to read the file to see what you broke."""
+    (web_workspace.scripts_dir / "unparseable.yaml").write_text("a: [1, 2\n")
+    response = client.get("/scripts/unparseable.yaml/raw")
+    assert response.status_code == 200
+    assert "a: [1, 2" in response.text
+
+
 def test_empty_workspace_renders(workspace):
     """A brand new workspace with no subdirectories at all."""
     response = TestClient(create_app(workspace)).get("/")
