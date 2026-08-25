@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from moviemakr.cli import build_parser, check_tools, main
+from moviemakr.errors import ConfigError
 from moviemakr.render import RenderOptions
 
 
@@ -18,11 +19,19 @@ def tools_present(monkeypatch):
     monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
 
 
-@pytest.mark.parametrize("command", ["render", "assemble", "status"])
+@pytest.mark.parametrize("command", ["render", "assemble", "status", "stills"])
 def test_subcommands_parse(command):
     args = build_parser().parse_args([command, "script.yaml"])
     assert args.command == command
     assert args.script == Path("script.yaml")
+
+
+def test_stills_defaults():
+    args = build_parser().parse_args(["stills", "s.yaml"])
+    assert args.count == 6
+    assert args.scene is None
+    assert args.dest is None
+    assert args.prefix is None
 
 
 def test_render_defaults():
@@ -112,6 +121,94 @@ def test_assemble_without_clips_is_exit_1(tools_present, capsys, write_script, p
     path = write_script()
     assert main(["assemble", str(path)], project_root=project_root) == 1
     assert "no rendered clips found" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------
+# stills
+# --------------------------------------------------------------------------
+
+
+def test_pick_scene_defaults_to_the_only_scene(load):
+    from moviemakr.cli import pick_scene
+
+    script = load()
+    assert pick_scene(script, None).id == "opening"
+
+
+def test_pick_scene_needs_an_id_when_there_are_several(load):
+    from moviemakr.cli import pick_scene
+
+    script = load({"scenes": [{"id": "a", "prompt": "p"}, {"id": "b", "prompt": "p"}]})
+    with pytest.raises(ConfigError) as exc:
+        pick_scene(script, None)
+    assert "a, b" in str(exc.value)
+
+
+def test_pick_scene_lists_the_ids_on_a_bad_one(load):
+    from moviemakr.cli import pick_scene
+
+    script = load({"scenes": [{"id": "a", "prompt": "p"}, {"id": "b", "prompt": "p"}]})
+    with pytest.raises(ConfigError) as exc:
+        pick_scene(script, "nope")
+    assert "available: a, b" in str(exc.value)
+
+
+def test_stills_without_a_clip_is_exit_1(tools_present, capsys, write_script, project_root):
+    path = write_script()
+    assert main(["stills", str(path)], project_root=project_root) == 1
+    assert "no rendered clip" in capsys.readouterr().err
+
+
+def test_stills_with_a_bad_scene_id_is_exit_2(tools_present, capsys, write_script,
+                                              project_root):
+    path = write_script()
+    code = main(["stills", str(path), "--scene", "nope"], project_root=project_root)
+    assert code == 2
+    assert "available: opening" in capsys.readouterr().err
+
+
+def test_stills_writes_into_assets_by_default(tools_present, capsys, load, write_script,
+                                              project_root, monkeypatch):
+    """The default destination is assets/, the only mount a ref image can live under."""
+    from moviemakr import cli
+
+    path = write_script()
+    script = load()
+    clip = script.layout.clip(script.scenes[0].slug)
+    clip.parent.mkdir(parents=True, exist_ok=True)
+    clip.write_bytes(b"not-really-a-webm")
+
+    monkeypatch.setattr(cli, "probe_clip", lambda p: {"duration": 4.0})
+    written = []
+
+    def fake_extract(clip, dest, at):
+        written.append((dest, at))
+        return True
+
+    monkeypatch.setattr(cli, "extract_still", fake_extract)
+
+    assert main(["stills", str(path), "--count", "2"], project_root=project_root) == 0
+    # The slug carries the scene index, so the default prefix does too.
+    assert [d.name for d, _ in written] == ["001-opening-01.png", "001-opening-02.png"]
+    assert all(d.parent == (project_root / "assets").resolve() for d, _ in written)
+    assert [at for _, at in written] == [1.0, 3.0]
+
+
+def test_stills_reports_a_failed_extraction(tools_present, capsys, load, write_script,
+                                            project_root, monkeypatch):
+    from moviemakr import cli
+
+    path = write_script()
+    script = load()
+    clip = script.layout.clip(script.scenes[0].slug)
+    clip.parent.mkdir(parents=True, exist_ok=True)
+    clip.write_bytes(b"x")
+
+    monkeypatch.setattr(cli, "probe_clip", lambda p: {"duration": 4.0})
+    monkeypatch.setattr(cli, "extract_still", lambda c, d, a: False)
+
+    assert main(["stills", str(path), "--count", "1"], project_root=project_root) == 1
+    assert "FAILED" in capsys.readouterr().err
 
 
 def test_called_process_error_names_the_program(tools_present, capsys, write_script,

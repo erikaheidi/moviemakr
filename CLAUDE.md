@@ -42,6 +42,7 @@ moviemakr render   scripts/h3/beach.yaml --dry-run  # print docker commands, ren
 moviemakr render   scripts/h3/beach.yaml            # render all scenes, then assemble
 moviemakr status   scripts/h3/beach.yaml            # per-scene state + measured durations
 moviemakr assemble scripts/h3/beach.yaml            # re-stitch from existing clips
+moviemakr stills   scripts/h3/beach.yaml --count 6  # pull reference stills from a clip
 moviemakr serve --host 0.0.0.0                      # browse the workspace over HTTP
 ```
 
@@ -49,10 +50,17 @@ moviemakr serve --host 0.0.0.0                      # browse the workspace over 
 points. Script paths are ordinary CLI arguments and are **not** resolved against
 the workspace — `--workspace` only decides where assets and renders live.
 
+`stills` extracts evenly spaced frames from one rendered scene clip
+(`--scene ID`, or the only scene) and writes them to `assets/` by default —
+because a reference *image* has to live under that mount to survive
+`to_container()`. It is how a turnaround render becomes reusable character
+references; see `scripts/h3/niulai-cat-sheet.yaml`. Timestamps are segment
+midpoints, never the first or last frame, which are the blurriest.
+
 ### Tests
 
 ```bash
-.venv/bin/python -m pytest          # ~250 tests, under a second
+.venv/bin/python -m pytest          # ~390 tests, under a second
 ```
 
 The suite is hermetic — no Docker, GPU, or ffmpeg. That works because `sd_args`

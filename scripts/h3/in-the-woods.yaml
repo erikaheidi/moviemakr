@@ -244,7 +244,7 @@ scenes:
   # The tilt is the payoff and it is placed last on purpose. If it gets clipped,
   # shorten the approach rather than raising video_frames past 100.
   - id: the-approach
-    video_frames: 100         # ~4.17s - the exit, the approach, and the tilt
+    video_frames: 90         # ~4.17s - the exit, the approach, and the tilt
     # Downscaled refs - see the REFERENCE PIXEL BUDGET note in the header. At the
     # full-size 2880x2168 files this scene DeviceLost'd three attempts out of
     # three; it and scene 9 were the only two scenes carrying two 6.24 MP images
@@ -492,7 +492,7 @@ scenes:
   # paw lifted and rocked side to side - rather than as "waving", which the model
   # is far more likely to render as a hop.
   - id: goodbye
-    video_frames: 100         # ~4.17s - the turn, the wave, and the exit
+    video_frames: 90         # ~4.17s - the turn, the wave, and the exit
     # Downscaled refs, same reason as scene 2 - this was the other DeviceLost.
     # See the REFERENCE PIXEL BUDGET note in the header.
     ref_images:

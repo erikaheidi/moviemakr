@@ -1,0 +1,172 @@
+# josy-birthday - a single-scene short: Josy, Pipa and Preta in party hats,
+# dancing under the bunting at somebody's birthday.
+#
+#   ./moviemakr.py render scripts/h3/josy-birthday.yaml --dry-run
+#   ./moviemakr.py render scripts/h3/josy-birthday.yaml
+#   ./moviemakr.py status scripts/h3/josy-birthday.yaml
+#
+# Prompt written through the `h3-prompt-writing` skill in full-reference
+# (Ref2VA) form - see .claude/skills/h3-prompt-writing/references/ref-en.txt -
+# with the same two adaptations as the sibling scripts in scripts/h3/:
+#
+#   1. One [Shot 1], no cut timestamp. moviemakr generates one shot per docker
+#      run, and here that is the whole film.
+#   2. detailed_description runs ~230 words rather than the guide's 350-500.
+#      That range is for a full multi-shot video; one ~3.75-second shot carries
+#      far less information. Same range as josy-skate-dream (201-250).
+#
+# ---------------------------------------------------------------------------
+# THE <Picture N> CONTRACT
+# ---------------------------------------------------------------------------
+# Refs reach sd-cli as: chained previous frame first, then continuity.anchors,
+# then the scene's own ref_images. There is only one scene, so chaining is off
+# and the labels are simply anchor-then-scene-refs:
+#
+#   <Picture 1> = assets/josy-reference.jpg   (anchor)
+#   <Picture 2> = assets/pipa.jpeg
+#   <Picture 3> = assets/preta.jpeg
+#
+# If you ever add a scene 2 and chain it, every label in it shifts by one.
+#
+# ---------------------------------------------------------------------------
+# THE CAST - and the two photos that need warning labels
+# ---------------------------------------------------------------------------
+# josy-reference.jpg  the anchor: Josy full-body, sitting, clean light. Fixes
+#                     her build, coat, white chest blaze and bat ears.
+# pipa.jpeg           Pipa, head-and-shoulders against a white wall, front paws
+#                     folded. A FACE PLATE ONLY - it says nothing about her
+#                     body below the chest. She is up on her hind legs here, so
+#                     she is marked partially_preserved and the body is
+#                     described outright.
+# preta.jpeg          Preta. **This file is a four-panel photo collage** - four
+#                     shots of the same small dog in a 2x2 grid with white
+#                     gutters, and one panel has a human hand under her chin.
+#                     The prompt says so and marks her partially_preserved,
+#                     naming her markings as what carries over. Without that
+#                     line you get four Pretas in a grid, and the hand turns up
+#                     in a room that is supposed to have no people in it.
+#
+# ---------------------------------------------------------------------------
+# NO HUMANS - keep the closing line
+# ---------------------------------------------------------------------------
+# Every frame of birthday-party footage the model has ever seen is full of
+# people, and a party is worse for this than the promenade in
+# josy-skate-dream: it summons hands holding cake, legs behind the furniture,
+# faces at the edge of frame. The closing line names humans, hands, legs, faces
+# and shadows as absent. Do not trim it to "no people" - the hands and the
+# shadows are exactly what come back.
+#
+# ---------------------------------------------------------------------------
+# NOBODY SPEAKS, AND NOTHING IS WRITTEN
+# ---------------------------------------------------------------------------
+# No dialogue and no <d> block, as everywhere else in scripts/h3/ - talking
+# animal mouths are the one thing this model does badly enough to break a shot.
+# The bunting is deliberately described as plain triangles of coloured paper
+# with NO lettering: "HAPPY BIRTHDAY" is thirteen characters and the model
+# garbles anything past about six. Garbled bunting reads as a render fault.
+#
+# ---------------------------------------------------------------------------
+# KEEPING HER FEMALE
+# ---------------------------------------------------------------------------
+# The phrase is "compact and petite, with a narrow finely-boned head, a slender
+# neck, a light delicate frame", restated in BOTH subject_definitions and at her
+# first appearance in detailed_description, per the guide's rule. Same wording
+# as the sibling scripts, on purpose.
+name: josy-birthday
+
+model:
+  root: /home/erika/Projects/ai-models          # host dir, mounted read-only at /models
+  diffusion_model: minimax-h3/minimax_h3_ref2va_pruned-Q8_0.gguf
+  llm:             minimax-h3/qwen3vl_32b_minimax_h3-Q4_K_M.gguf
+  vae:             minimax-h3/minimax_h3_video_vae_fp16.safetensors
+  audio_vae:       minimax-h3/minimax_h3_audio_vae_fp32.safetensors
+
+docker:
+  image: ghcr.io/leejet/stable-diffusion.cpp:master-vulkan
+  devices: [/dev/dri/card1, /dev/dri/renderD128, /dev/kfd]
+  # Your UID owns the GPU device ACLs, so the container can drop root and still
+  # reach the GPU - which keeps rendered clips owned by you instead of root.
+  run_as_current_user: true
+
+defaults:
+  # Portrait, as every other script in scripts/h3/.
+  width: 544
+  height: 960
+  fps: 24
+  # ~3.75s. sd-cli rounds this UP, and not by one or two: measured on this box
+  # at 544x960, 90 stays 90, 100 becomes 107, 110 becomes 124 - and 124 has
+  # DeviceLost'd at the VAE stage. Check the "generate_video 544x960xN" line in
+  # the log for what you actually got.
+  video_frames: 100
+  cfg_scale: 1.0
+  seed: 42
+  negative_prompt: ""       # no effect at cfg_scale 1.0 - CFG is off, so the
+                            # negative prompt is never evaluated. Steer with
+                            # positive description instead.
+  # MUST stay empty for H3-structured prompts. full_prompt() appends the suffix
+  # as ". <suffix>" at the very end - which here is the end of
+  # non_diegetic_music, so the style text would read as part of the score. The
+  # look lives in detailed_description's opening line instead.
+  style_suffix: ""
+  # --mmap matters: ~39 GB of weights reload on every scene, and the page cache
+  # keeps them warm between runs. The VAE stays on the GPU on purpose -
+  # "--backend vae=cpu" made the audio decode at the end of each scene slower.
+  extra_args: ["--diffusion-fa", "--mmap", "--backend", "te=cpu"]
+
+continuity:
+  # The clean full-body shot that fixes her build, coat, white chest blaze and
+  # bat ears. Pipa and Preta are scene refs rather than anchors purely out of
+  # habit from the sibling scripts - with one scene the two are equivalent, but
+  # keeping the split means the <Picture N> order survives if a scene is added.
+  anchors:
+    - josy-reference.jpg
+
+  # Reference *videos* stay empty on purpose: on this box a --ref-video either
+  # crashes the GPU with DeviceLost or drags the whole pipeline onto the CPU.
+  anchor_videos: []
+
+  chain_from_previous: false
+
+output:
+  container: mp4             # mp4 (h264/aac) or webm (vp9/opus)
+  audio: keep                # keep the model's generated audio, or "strip"
+  music: null                # optional file under assets/, mixed under the movie
+  music_gain_db: -18
+
+scenes:
+  # -------------------------------------------------------------------------
+  # 1. The party.
+  # -------------------------------------------------------------------------
+  # Three animals, three hats, one action: they dance. The bodies do the work
+  # here, so all three are written with a specific, different move - Josy's
+  # front-paw bounce, Pipa up on her hind legs, Preta spinning - rather than a
+  # shared "they dance", which the model renders as three animals standing
+  # still while the camera moves.
+  - id: the-party
+    chain_from_previous: false
+    ref_images:
+      - pipa.jpeg
+      - preta.jpeg
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the small female French bulldog in <Picture 1>: compact and petite, with a narrow finely-boned head, a slender neck, and a light delicate frame, a short dark brindle coat that reads almost black, faint lighter brindle striping along her flanks, a white blaze covering the centre of her chest, large upright bat ears, wide round dark eyes, a short deeply wrinkled muzzle, and a flat black nose.
+      <Subject 2> is the brown tabby cat in <Picture 2>: a warm brown mackerel tabby with dark striping over tan-brown fur, an M-shaped marking across her forehead, large triangular ears with pale pink insides and fine white tufts, wide round yellow-green eyes rimmed in dark fur, a brick-pink nose, long white whiskers and a white chin, on a lean medium-sized cat's body with a long striped tail.
+      <Subject 3> is the small black-and-tan dog in <Picture 3>: a short-coated senior dog with a glossy black back and skull, rust-tan pips above each eye, tan cheeks and a greying muzzle, a tan chest and tan front legs, small semi-folded ears and very large round protruding dark eyes, standing about half the bulldog's height.
+      <Subject 4> are their three party hats: small cones of glossy card, one striped pink and gold, one plain teal, one spotted yellow, each with a little crepe pom-pom at the tip and a thin elastic cord under the chin, sitting slightly askew.
+      <Subject 5> is the room behind them: a warm domestic living room in the evening, a plain pale wall hung with a string of plain triangular paper bunting in pink, teal and gold with no lettering or writing on any flag, a loose cluster of pastel balloons drifting in the upper corner, a gold foil fringe curtain catching the light, and a table edge below carrying a small frosted cake with unlit candles, all lit by a warm low table lamp just out of frame.
+
+      summary:
+      [reference generation] The target video holds on <Subject 1>, <Subject 2> and <Subject 3> abreast in front of <Subject 5>, all three wearing <Subject 4> and all three dancing on the spot with open-mouthed happy faces - the bulldog bouncing on her front paws, the tabby up on her hind legs, the little black-and-tan dog spinning - as the bunting sways and the balloons drift behind them. <Picture 1> supplies the bulldog, <Picture 2> the tabby, <Picture 3> the black-and-tan dog.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the petite finely-boned build, near-black brindle coat with faint lighter striping, white chest blaze, large upright bat ears, wide round dark eyes and short deeply wrinkled muzzle of <Picture 1> are retained; the plain background and seated pose of <Picture 1> are not, and she stands and dances here.
+      <Subject 2> (appears in [Shot 1]): partially_preserved - the warm brown mackerel tabby striping, the forehead M, the large pink-lined triangular ears, the round yellow-green eyes, the brick-pink nose, the long white whiskers and the white chin of <Picture 2> are retained; her body below the chest is not defined by <Picture 2> and is shown here as a lean full cat's body with a long striped tail, balanced upright on her hind legs. The plain white wall of <Picture 2> is not retained.
+      <Subject 3> (appears in [Shot 1]): partially_preserved - the glossy black coat, the rust-tan eyebrow pips, the tan cheeks and greying muzzle, the tan chest and legs, the small semi-folded ears and the very large round protruding dark eyes of <Picture 3> are retained. <Picture 3> is a four-panel photo collage: exactly one such dog appears in the target video, standing on the floor, and no grid, no panel divisions, no white gutters and no human hand appear anywhere.
+
+      detailed_description:
+      The target video is photorealistic live-action footage in a warm celebratory domestic style, shot on a medium lens at knee height in low golden lamplight, with a shallow depth of field, soft glowing highlights on the foil and fine film grain.
+      [Shot 1] The shot opens on the three of them abreast on a wooden floor in front of <Subject 5>, the pale wall strung with plain triangular paper bunting, the pastel balloons drifting in the upper corner and the gold fringe curtain glinting behind. <Subject 1>, the small compact female French bulldog with the narrow finely-boned head, slender neck, white chest blaze and large upright bat ears, stands in the centre in the striped pink and gold cone of <Subject 4>, mouth open in a wide happy grin with her pink tongue lolling, and bounces up and down on her front paws in time, her bat ears flopping forward on each landing. To her left <Subject 2>, the brown tabby with the forehead M and the wide yellow-green eyes, rears up onto her hind legs in the teal cone, front paws paddling the air in front of her chest, long striped tail whipping for balance, eyes half-closed and whiskers pushed forward. To her right <Subject 3>, the little black-and-tan dog with the rust-tan eyebrow pips and the huge round protruding eyes, wears the yellow spotted cone knocked back over one ear and spins a tight circle on the spot, tan legs skittering, greying muzzle open in a delighted grin. The bunting sways above them, a balloon nudges down into frame, and the camera pushes in very slowly. There are no people anywhere in the shot: no humans, no human hands, legs or faces, and no human shadows on the floor or the wall at any point.
+
+      overall_soundscape: A warm close living-room tone with the soft crackle of foil fringe moving in the air. Blunt claws tapping and skittering on a wooden floor at three different tempos, a balloon squeaking as it brushes the wall, paper bunting rustling overhead, an excited high yipping from the small dog, a short answering bark, a rolling chirping trill from the cat, and fast snuffling flat-faced panting close to the microphone. No speech.
+
+      non_diegetic_music: A bright celebratory party shuffle at a fast dancing tempo - honky-tonk piano leading, brushed snare and kick on a swung beat, walking upright bass, tambourine on the offbeat and a small brass stab at the top of each phrase, warm and slightly toy-like in scale, running flat out from the first frame and still going at the cut.

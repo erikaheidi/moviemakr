@@ -14,6 +14,7 @@ from .config import Script, load_script
 from .docker import format_argv
 from .errors import ConfigError
 from .layout import WORKSPACE_ENV, Workspace
+from .media import extract_still, probe_clip, still_timestamps
 from .render import RenderOptions, render
 from .report import print_summary
 from .status import scene_rows
@@ -61,6 +62,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_status = sub.add_parser("status", parents=[common], help="show per-scene state")
     p_status.add_argument("script", type=Path)
 
+    p_stills = sub.add_parser(
+        "stills", parents=[common],
+        help="extract reference stills from a rendered scene clip")
+    p_stills.add_argument("script", type=Path)
+    p_stills.add_argument("--scene", help="scene id (default: the only scene)")
+    p_stills.add_argument("--count", type=int, default=6, help="stills to pull (default 6)")
+    p_stills.add_argument("--dest", type=Path,
+                          help="output directory (default: the workspace's assets/)")
+    p_stills.add_argument("--prefix", help="filename prefix (default: the scene slug)")
+
     p_serve = sub.add_parser("serve", parents=[common],
                              help="browse the workspace over HTTP")
     p_serve.add_argument("--host", default="127.0.0.1",
@@ -92,6 +103,57 @@ def cmd_assemble(script: Script) -> int:
     movie = assemble(script, scenes)
     print(f"\nmovie: {movie}")
     return 0
+
+
+def pick_scene(script: Script, scene_id: str | None):
+    """The scene named by --scene, or the only one there is."""
+    if scene_id is None:
+        if len(script.scenes) == 1:
+            return script.scenes[0]
+        ids = ", ".join(s.id for s in script.scenes)
+        raise ConfigError(
+            f"script has {len(script.scenes)} scenes - name one with --scene: {ids}")
+    for scene in script.scenes:
+        if scene.id == scene_id:
+            return scene
+    ids = ", ".join(s.id for s in script.scenes)
+    raise ConfigError(f"no scene with id {scene_id!r} - available: {ids}")
+
+
+def cmd_stills(script: Script, args) -> int:
+    """Pull evenly spaced frames out of one rendered clip, into assets/.
+
+    Defaults to `script.assets_dir` - the very directory this script's layout
+    mounts at /assets - because a reference *image* has to live under that mount
+    to survive `RunLayout.to_container()`; a still written anywhere else cannot
+    be handed back to sd-cli as a ref.
+    """
+    scene = pick_scene(script, args.scene)
+    clip = script.layout.clip(scene.slug)
+    if not clip.is_file() or clip.stat().st_size == 0:
+        print(f"error: no rendered clip for scene {scene.id!r}: {clip}", file=sys.stderr)
+        return 1
+
+    # Measured, never assumed - the model rounds video_frames up.
+    duration = probe_clip(clip).get("duration") or 0.0
+    stamps = still_timestamps(duration, args.count)
+
+    dest_dir = (args.dest or script.assets_dir).resolve()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    prefix = args.prefix or scene.slug
+
+    failed = 0
+    for n, at in enumerate(stamps, start=1):
+        dest = dest_dir / f"{prefix}-{n:02d}.png"
+        if extract_still(clip, dest, at):
+            print(f"  {at:6.2f}s  {dest}")
+        else:
+            print(f"  {at:6.2f}s  FAILED  {dest}", file=sys.stderr)
+            failed += 1
+
+    written = len(stamps) - failed
+    print(f"\n{written}/{len(stamps)} stills in {dest_dir}")
+    return 1 if failed else 0
 
 
 def check_tools(command: str, dry_run: bool) -> int | None:
@@ -144,6 +206,8 @@ def main(argv: Sequence[str] | None = None, project_root: Path | None = None) ->
             return cmd_assemble(script)
         if args.command == "status":
             return cmd_status(script)
+        if args.command == "stills":
+            return cmd_stills(script, args)
     except ConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
