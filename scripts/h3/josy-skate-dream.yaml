@@ -1,4 +1,4 @@
-# josy-skate-dream - a seven-scene short.
+# josy-skate-dream - an eight-scene short.
 # Josy taps out a message on the phone beside her on the couch. Cut inside the
 # screen: a group chat with Pipa the tabby and Preta the little black-and-tan
 # terrier. The chat becomes a split-screen video call, the three of them agree
@@ -26,27 +26,26 @@
 #      measure at (josy-beach-drive 201-245, josy-bat-dream 197-250).
 #
 # ---------------------------------------------------------------------------
-# SCENE BREAKDOWN - the draft's seven beats map one to one
+# SCENE BREAKDOWN - the draft's seven beats over eight scenes
 # ---------------------------------------------------------------------------
-# The drafted beats each fit one shot, so nothing was split and the film stays
-# at seven scenes:
+# Six of the drafted beats fit one shot each. Draft 6 does not, and is split
+# across two scenes, so the film runs eight:
 #
 #   draft 1 (couch, phone, she types)   -> 1  typing-on-the-couch
 #   draft 2 (close-up, the group chat)  -> 2  the-group-chat
 #   draft 3 (split-screen call, agreed) -> 3  the-video-call
 #   draft 4 (promenade pan, no humans)  -> 4  the-promenade
 #   draft 5 (josy-skate POV, she pushes)-> 5  the-push
-#   draft 6 (wide side view, all three) -> 6  three-of-them
-#   draft 7 (indoors, wakes, sleeps)    -> 7  waking
+#   draft 6 (wide side view, all three) -> 6  pipa-comes-up
+#                                          7  preta-makes-it-three
+#   draft 7 (indoors, wakes, sleeps)    -> 8  waking
 #
-# Three scenes are raised to video_frames: 100 (sd-cli rounds that to 107,
+# Two scenes are raised to video_frames: 100 (sd-cli rounds that to 107,
 # ~4.46s) because they carry sequential beats rather than one continuous motion:
 #
 #   4  the-promenade - the pan has to reach three separate pieces of business
 #                      (the volleyball game, the walking cats, the skaters).
-#   6  three-of-them - Josy rides in, THEN Pipa arrives, THEN Preta does. At 90
-#                      the second and third arrivals land on top of each other.
-#   7  waking        - wake, scan, smile, settle. Four beats on a locked-off
+#   8  waking        - wake, scan, smile, settle. Four beats on a locked-off
 #                      camera, which is what makes the extra ~0.7s buy real
 #                      room rather than dead air.
 #
@@ -55,6 +54,15 @@
 #
 # 100 is the ceiling, not a starting point: 110 rounds to 124 frames and takes
 # the GPU out with DeviceLost (see scripts/h3/butterfly-dream.yaml).
+#
+# 100 is also not always reachable. Draft 6 - Josy rides in, THEN Pipa arrives,
+# THEN Preta does - needed the extra ~0.7s, because at 90 the second and third
+# arrivals land on top of each other. It got it, and then died three times with
+# DeviceLost inside "generate_video 544x960x107": four refs at 107 frames is
+# past what this box holds, even though scenes 4 and 8 take 107 fine on one and
+# two refs. So it is two scenes of 90 with two arrivals apiece instead, which
+# buys the beats more room than 100 ever did. The frame ceiling is not a single
+# number - it moves with the reference count.
 #
 # ---------------------------------------------------------------------------
 # THE <Picture N> CONTRACT - read before editing any prompt
@@ -67,7 +75,7 @@
 #     <Picture 1> = assets/josy-reference.jpg
 #     <Picture 2> = assets/josy-phone.jpeg
 #
-#   scenes 2, 3, 6 (chained, 2 scene refs):
+#   scenes 2, 3, 7 (chained, 2 scene refs):
 #     <Picture 1> = the previous scene's last frame
 #     <Picture 2> = assets/josy-reference.jpg
 #     <Picture 3> = assets/pipa.jpeg
@@ -76,12 +84,13 @@
 #   scene 4 (chain off, no scene refs):
 #     <Picture 1> = assets/josy-reference.jpg
 #
-#   scene 5 (chained, 1 scene ref):
+#   scenes 5 and 6 (chained, 1 scene ref):
 #     <Picture 1> = the previous scene's last frame
 #     <Picture 2> = assets/josy-reference.jpg
-#     <Picture 3> = assets/josy-skate.jpeg
+#     <Picture 3> = assets/josy-skate.jpeg  (scene 5)
+#                 = assets/pipa.jpeg        (scene 6)
 #
-#   scene 7 (chain off, 1 scene ref):
+#   scene 8 (chain off, 1 scene ref):
 #     <Picture 1> = assets/josy-reference.jpg
 #     <Picture 2> = assets/josy-phone.jpeg
 #
@@ -92,11 +101,11 @@
 #   scene 4 - the cut from inside the phone to the promenade. Chaining a glowing
 #             screen into a wide sunlit exterior drags UI panels and screen
 #             glare across the establishing shot.
-#   scene 7 - the cut from dream to waking, and the same trick josy-bat-dream
+#   scene 8 - the cut from dream to waking, and the same trick josy-bat-dream
 #             plays at its scene 9. Chaining the promenade in would drag the sea
 #             and the sky into the shot that exists to prove neither happened.
 #             josy-phone restates the indoor plate from a clean frame instead,
-#             which is also what makes 7 rhyme with 1 on screen - both scenes
+#             which is also what makes 8 rhyme with 1 on screen - both scenes
 #             are chain-off with the same two refs in the same order.
 #
 # <Subject N> numbering is per scene, in order of first appearance, as the guide
@@ -127,7 +136,7 @@
 #                     partially_preserved, naming her markings as the thing that
 #                     carries over. Without that line the model reproduces the
 #                     grid: you get a split-screen inside the split-screen in
-#                     scene 3, and four Pretas on the promenade in scene 6. The
+#                     scene 3, and four Pretas on the promenade in scene 7. The
 #                     hand has to be excluded by name too, or it turns up in a
 #                     film whose whole premise is that there are no humans.
 #
@@ -156,11 +165,11 @@
 # ---------------------------------------------------------------------------
 # 544x960 throughout, as every other script in scripts/h3/, and assembly pads
 # rather than stretches - so a landscape scene would pillarbox in the middle of
-# the movie. josy-skate.jpeg is a 16:9 frame and scene 6 is drafted as a "wide
-# side view"; both are held as camera ANGLE, not as crop. Scene 6 gets its width
-# from a wide lens and a low camera, with Josy in full side profile across the
-# lower third and the railing, the sea and a deep sky stacked above her. That
-# stack is what a tall frame is actually good at.
+# the movie. josy-skate.jpeg is a 16:9 frame and draft 6 is written as a "wide
+# side view"; both are held as camera ANGLE, not as crop. Scenes 6 and 7 get
+# their width from a wide lens and a low camera, with Josy in full side profile
+# across the lower third and the railing, the sea and a deep sky stacked over
+# her. That stack is what a tall frame is actually good at.
 #
 # ---------------------------------------------------------------------------
 # NO HUMANS - say it in every exterior
@@ -210,7 +219,7 @@ docker:
 
 defaults:
   # Portrait, as every other script in scripts/h3/. See the PORTRAIT note in the
-  # header for why scene 6's "wide side view" still renders 544x960.
+  # header for why the "wide side view" of scenes 6 and 7 still renders 544x960.
   width: 544
   height: 960
   fps: 24
@@ -465,52 +474,94 @@ scenes:
       non_diegetic_music: The bright surf-rock electric guitar with spring reverb carries the melody forward over brushed drums and a walking bassline, the drums shifting into a driving snare-led groove that lands on each of her two pushes and rides steady afterwards.
 
   # -------------------------------------------------------------------------
-  # 6. The three of them.
+  # 6. Pipa comes up.
   # -------------------------------------------------------------------------
   # Chained for the location again, and the framing changes again - out of the
   # POV and around to the side, low and wide. See PORTRAIT in the header for why
   # a "wide side view" still renders 544x960: the width comes from the lens, and
   # the tall frame is spent on railing / sea / sky stacked over her.
   #
-  # 100 frames because the arrivals are sequential - Josy, then Pipa, then
-  # Preta. At 90 the second and third land on top of each other. The order is
-  # stated explicitly in detailed_description for the same reason.
-  - id: three-of-them
-    video_frames: 100         # ~4.46s actual - three arrivals. Do not raise: 110 -> 124 frames = DeviceLost.
+  # This was one scene, "three-of-them", at video_frames: 100. It failed three
+  # attempts with DeviceLost inside generate_video 544x960x107 - four refs plus
+  # 107 frames is over what this box will hold, even though scenes 4 and 7 take
+  # 107 fine on one and two refs. Split in two at 90 frames rather than dropped
+  # to 90 as one shot, because 90 was never enough for three sequential arrivals
+  # in the first place - it is what forced 100 here originally.
+  #
+  # Two arrivals live here (Josy rides in, Pipa rolls up) and the third lives in
+  # scene 7. preta.jpeg is deliberately NOT a ref on this scene: she is not in
+  # the shot yet, and passing her would walk her into it early.
+  - id: pipa-comes-up
+    ref_images:
+      - pipa.jpeg
+    prompt: |-
+      subject_definitions:
+      <Subject 1> is the small female French bulldog established in <Picture 1> and <Picture 2>: compact and petite, with a narrow finely-boned head, a slender neck and a light delicate frame, a short dark brindle coat that reads almost black, faint lighter brindle striping along her flanks, a white blaze on the centre of her chest, large upright bat ears, wide round dark eyes and a short deeply wrinkled muzzle.
+      <Subject 2> is the brown tabby cat in <Picture 3>: a warm brown mackerel tabby with dark striping over tan-brown fur, an M-shaped marking across her forehead, large triangular ears with pale pink insides, wide round yellow-green eyes rimmed in dark fur, a brick-pink nose, long white whiskers and a white chin, on a lean medium-sized cat's body with a long striped tail.
+      <Subject 3> are their two skateboards: short cruiser decks with kicked tails, black grip tape printed with a tan outlined rounded-rectangle graphic, pale wood veneer along the nose and small dark trucks and wheels.
+      <Subject 4> is the seaside promenade established in <Picture 1>: a wide walkway of pale rectangular concrete paving slabs with dark grouted joints, a low white-painted railing along the seaward edge, marram grass and pale sand below it, flat blue-green sea and a hazy horizon beyond, in warm low late-afternoon sun under a deep clear sky.
+
+      summary:
+      [reference generation] The target video watches from beside the promenade of <Subject 4> as <Subject 1> rides in from the left on one of <Subject 3> in full side profile, and <Subject 2> rolls up out of the blind side behind her and settles in alongside. <Picture 2> supplies the bulldog, <Picture 3> the tabby.
+
+      retention_analysis:
+      <Picture 1> ([Shot 1] location and light): partially_preserved - the pale concrete paving slabs, the white railing, the marram grass and sand, the flat blue-green sea and the warm low late-afternoon sun of the previous shot are retained; its high-behind viewpoint is replaced by a low camera out to the side of the direction of travel.
+      <Subject 1> (appears in [Shot 1]): fully_preserved - the petite finely-boned build, near-black brindle coat, white chest blaze, large upright bat ears, wide round dark eyes and short wrinkled muzzle of <Picture 2> are retained.
+      <Subject 2> (appears in [Shot 1]): partially_preserved - the warm brown mackerel tabby striping, the forehead M, the large pink-lined triangular ears, the round yellow-green eyes, the brick-pink nose, the long white whiskers and the white chin of <Picture 3> are retained; her body below the chest is not defined by <Picture 3> and is shown here in full side profile, lean and long-tailed, standing on a board.
+
+      detailed_description:
+      The target video is photorealistic live-action footage in a bright naturalistic documentary style, shot on a wide lens from a low camera set beside the walkway and square on to the direction of travel, tracking sideways at riding speed in warm low late-afternoon sun, with deep focus, gentle lens flare and fine film grain.
+      [Shot 1] The frame is a tall stack: the pale paving slabs of <Subject 4> across the bottom, the low white railing behind them, then marram grass, pale sand, flat blue-green sea and a deep clear sky filling the upper half. <Subject 1>, the small compact female French bulldog with the white chest blaze and large upright bat ears, rides in from the left edge in full side profile, standing four-square on one of <Subject 3>, ears flattened back, tongue out, the low sun raking along her brindle flank. The camera picks her up and tracks with her, holding her in the lower third while the railing strobes past behind, and she rides alone for a long beat, watching the way ahead. Then <Subject 2>, the brown tabby with the forehead M and the yellow-green eyes, rolls into frame from the left behind her on her own board, tail streaming out level, closes the gap and settles just off the bulldog's shoulder, the two boards ticking along side by side. The bulldog turns her head towards the cat, mouth open wider. Only these two ride in this shot and no third animal enters the frame. There are no people anywhere in the shot: no humans, no human legs, hands or faces, and no human shadows on the paving at any point.
+
+      overall_soundscape: Steady surf breaking below the promenade, gulls overhead and a soft onshore wind pushing past the microphone throughout. One set of urethane wheels rumbling on concrete and ticking at the slab joints, joined partway by a second set running slightly out of phase with it, a short bark and a chirping trill answering it, and fast panting under it all. No speech.
+
+      non_diegetic_music: The surf-rock arrangement builds - electric guitar with spring reverb carrying the melody over driving snare-led drums and a walking bassline, with a bright organ pad joining underneath at the moment the tabby comes alongside, and holding there to the end of the shot.
+
+  # -------------------------------------------------------------------------
+  # 7. Preta makes it three.
+  # -------------------------------------------------------------------------
+  # The second half of the old "three-of-them". Chained from scene 6, so the
+  # previous frame already carries the side-on framing, the light and both
+  # riders - this shot only has to add the third and level the line out.
+  #
+  # Four refs at 90 frames, which is the same load scenes 2 and 3 render at.
+  # Do not merge this back into scene 6: four refs at 107 frames is exactly the
+  # combination that took the GPU out with DeviceLost.
+  - id: preta-makes-it-three
     ref_images:
       - pipa.jpeg
       - preta.jpeg
     prompt: |-
       subject_definitions:
       <Subject 1> is the small female French bulldog established in <Picture 1> and <Picture 2>: compact and petite, with a narrow finely-boned head, a slender neck and a light delicate frame, a short dark brindle coat that reads almost black, faint lighter brindle striping along her flanks, a white blaze on the centre of her chest, large upright bat ears, wide round dark eyes and a short deeply wrinkled muzzle.
-      <Subject 2> is the brown tabby cat in <Picture 3>: a warm brown mackerel tabby with dark striping over tan-brown fur, an M-shaped marking across her forehead, large triangular ears with pale pink insides, wide round yellow-green eyes rimmed in dark fur, a brick-pink nose, long white whiskers and a white chin, on a lean medium-sized cat's body with a long striped tail.
+      <Subject 2> is the brown tabby cat established in <Picture 1> and <Picture 3>: a warm brown mackerel tabby with dark striping over tan-brown fur, an M-shaped marking across her forehead, large triangular ears with pale pink insides, wide round yellow-green eyes rimmed in dark fur, a brick-pink nose, long white whiskers and a white chin, on a lean medium-sized cat's body with a long striped tail.
       <Subject 3> is the small black-and-tan dog in <Picture 4>: a short-coated senior dog with a glossy black back and skull, rust-tan pips above each eye, tan cheeks and a greying muzzle, a tan chest and tan legs, small semi-folded ears and very large round protruding dark eyes, standing about half the bulldog's height.
       <Subject 4> are their three skateboards: short cruiser decks with kicked tails, black grip tape printed with a tan outlined rounded-rectangle graphic, pale wood veneer along the nose and small dark trucks and wheels.
       <Subject 5> is the seaside promenade established in <Picture 1>: a wide walkway of pale rectangular concrete paving slabs with dark grouted joints, a low white-painted railing along the seaward edge, marram grass and pale sand below it, flat blue-green sea and a hazy horizon beyond, in warm low late-afternoon sun under a deep clear sky.
 
       summary:
-      [reference generation] The target video watches from beside the promenade of <Subject 5> as <Subject 1> rides in from the left on one of <Subject 4> in full side profile, then <Subject 2> rolls up alongside her, then <Subject 3> does, and the three of them ride out to the right together. <Picture 2> supplies the bulldog, <Picture 3> the tabby, <Picture 4> the black-and-tan dog.
+      [reference generation] The target video continues the tracking shot of <Picture 1> along <Subject 5>: <Subject 1> and <Subject 2> ride side by side on two of <Subject 4>, <Subject 3> comes up on the outside on the third board, and the three of them level out abreast and ride out to the right together. <Picture 2> supplies the bulldog, <Picture 3> the tabby, <Picture 4> the black-and-tan dog.
 
       retention_analysis:
-      <Picture 1> ([Shot 1] location and light): partially_preserved - the pale concrete paving slabs, the white railing, the marram grass and sand, the flat blue-green sea and the warm low late-afternoon sun of the previous shot are retained; its high-behind viewpoint is replaced by a low camera out to the side of the direction of travel.
+      <Picture 1> ([Shot 1] location, light and framing): fully_preserved - the low side-on camera tracking at riding speed, the pale concrete paving slabs, the low white railing, the marram grass and sand, the flat blue-green sea, the deep clear sky and the warm low late-afternoon sun of the previous shot are all retained, and the two riders already in frame continue on unchanged.
       <Subject 1> (appears in [Shot 1]): fully_preserved - the petite finely-boned build, near-black brindle coat, white chest blaze, large upright bat ears, wide round dark eyes and short wrinkled muzzle of <Picture 2> are retained.
-      <Subject 2> (appears in [Shot 1]): partially_preserved - the warm brown mackerel tabby striping, the forehead M, the large pink-lined triangular ears, the round yellow-green eyes, the brick-pink nose, the long white whiskers and the white chin of <Picture 3> are retained; her body below the chest is not defined by <Picture 3> and is shown here in full side profile, lean and long-tailed, standing on a board.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - the warm brown mackerel tabby striping, the forehead M, the large pink-lined triangular ears, the round yellow-green eyes, the brick-pink nose, the long white whiskers and the white chin of <Picture 3> are retained, in the full side profile she already holds in <Picture 1>.
       <Subject 3> (appears in [Shot 1]): partially_preserved - the glossy black coat, the rust-tan eyebrow pips, the tan cheeks and greying muzzle, the tan chest and legs and the very large round dark eyes of <Picture 4> are retained. <Picture 4> is a four-panel photo collage: exactly one such dog appears in the target video, and no grid, no panel divisions, no white gutters, no white tiled floor and no human hand appear anywhere.
 
       detailed_description:
       The target video is photorealistic live-action footage in a bright naturalistic documentary style, shot on a wide lens from a low camera set beside the walkway and square on to the direction of travel, tracking sideways at riding speed in warm low late-afternoon sun, with deep focus, gentle lens flare and fine film grain.
-      [Shot 1] The frame is a tall stack: the pale paving slabs of <Subject 5> across the bottom, the low white railing behind them, then the marram grass, the pale sand, the flat blue-green sea and a deep clear sky filling the upper half. <Subject 1>, the small compact female French bulldog with the narrow finely-boned head, slender neck, white chest blaze and large upright bat ears, rides in from the left edge in full side profile, standing four-square on one of <Subject 4>, ears flattened back, tongue out, the low sun raking along her brindle flank. The camera picks her up and tracks with her, holding her in the lower third. From behind her, <Subject 2>, the brown tabby with the forehead M and the yellow-green eyes, rolls up on her own board with her long striped tail streaming out level, and settles into the frame just behind the bulldog's shoulder. A beat later <Subject 3>, the little black-and-tan dog with the rust-tan eyebrow pips and the huge round eyes, comes up on the outside on the third board, legs braced wide, ears flapping. The three of them level out abreast and ride on together to the right, the railing strobing past behind them. There are no people anywhere in the shot: no humans, no human legs, hands or faces, and no human shadows on the paving at any point.
+      [Shot 1] The framing of <Picture 1> continues unbroken: the pale paving slabs of <Subject 5> across the bottom, the low white railing behind them, then the marram grass, the pale sand, the flat blue-green sea and a deep clear sky filling the upper half. <Subject 1>, the small compact female French bulldog with the white chest blaze and large upright bat ears, and <Subject 2>, the brown tabby with the forehead M and the yellow-green eyes, ride on in full side profile in the lower third, each standing on one of <Subject 4>, the railing strobing past behind them. Then <Subject 3>, the little black-and-tan dog with the rust-tan eyebrow pips and the huge round protruding eyes, comes up fast on the outside on the third board, legs braced wide, small semi-folded ears flapping back in the wind, and pulls level with the other two. The three of them settle abreast in one line across the frame, wheels ticking over the slab joints together, ears back, tongues out, and ride out towards the right edge into the low sun. There are no people anywhere in the shot: no humans, no human legs, hands or faces, and no human shadows on the paving at any point.
 
-      overall_soundscape: Steady surf breaking below the promenade, gulls overhead and a soft onshore wind pushing past the microphone throughout. Three sets of urethane wheels rumbling on concrete, each ticking at the slab joints slightly out of phase with the others, a short bark, a chirping trill and a high excited yip as they come together, and fast panting under it all. No speech.
+      overall_soundscape: Steady surf breaking below the promenade, gulls overhead and a soft onshore wind pushing past the microphone throughout. Two sets of urethane wheels rumbling on concrete become three as the little dog arrives, each ticking at the slab joints slightly out of phase with the others, a high excited yip as she pulls level, an answering short bark and chirping trill, and fast panting under it all. No speech.
 
-      non_diegetic_music: The surf-rock guitar melody reaches its full arrangement here - electric guitar with spring reverb, driving snare-led drums, walking bass and a bright organ pad joining underneath - each new instrument entering as one of the three riders arrives, and holding at full width to the end of the shot.
+      non_diegetic_music: The surf-rock arrangement reaches its full width here - electric guitar with spring reverb, driving snare-led drums, walking bass and organ pad already running, with tambourine and handclaps landing on the beat the third rider pulls level, and the whole band holding flat out to the end of the shot.
 
   # =========================================================================
   # DRAFT SCENE 7 - it was a dream
   # =========================================================================
 
   # -------------------------------------------------------------------------
-  # 7. Waking.
+  # 8. Waking.
   # -------------------------------------------------------------------------
   # Chain off - the cut that makes the film. josy-phone restates the indoor
   # plate from a clean frame rather than dragging the sea in, which also makes

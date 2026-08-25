@@ -21,10 +21,18 @@ anything. Dependencies: Docker, ffmpeg/ffprobe on PATH, Python 3.11+ with PyYAML
 ./moviemakr.py render scripts/example.yaml             # render all scenes, then assemble
 ./moviemakr.py status scripts/example.yaml             # per-scene state + measured durations
 ./moviemakr.py assemble scripts/example.yaml           # re-stitch from existing clips
+./moviemakr.py stills scripts/example.yaml --count 6   # pull reference stills from a clip
 ```
 
 `python -m moviemakr` and the installed `moviemakr` script are equivalent entry
 points.
+
+`stills` extracts evenly spaced frames from one rendered scene clip
+(`--scene ID`, or the only scene) and writes them to `assets/` by default —
+because a reference *image* has to live under that mount to survive
+`to_container()`. It is how a turnaround render becomes reusable character
+references; see `scripts/h3/niulai-cat-sheet.yaml`. Timestamps are segment
+midpoints, never the first or last frame, which are the blurriest.
 
 ### Tests
 

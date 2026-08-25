@@ -118,6 +118,45 @@ def extract_last_frame(clip: Path, dest: Path) -> bool:
 
 
 # --------------------------------------------------------------------------
+# stills - evenly spaced frames pulled out of a rendered clip
+# --------------------------------------------------------------------------
+
+
+def still_timestamps(duration: float, count: int) -> list[float]:
+    """Midpoints of `count` equal segments, not endpoints.
+
+    Midpoints, because 0.0 and `duration` land on the first and last frames -
+    which on a turnaround are the two most motion-blurred and least useful
+    views, and the last one is already covered by `extract_last_frame`.
+    """
+    if count < 1:
+        raise ConfigError(f"need at least one still, got {count}")
+    if duration <= 0:
+        raise ConfigError(f"clip has no measurable duration: {duration}")
+    return [duration * (i + 0.5) / count for i in range(count)]
+
+
+def still_cmd(clip: Path, dest: Path, at: float) -> list[str]:
+    """One frame at `at` seconds. -ss before -i is the fast input seek."""
+    return [
+        "ffmpeg", "-v", "error", "-y",
+        "-ss", f"{at:.3f}",
+        "-i", str(clip),
+        "-frames:v", "1", "-update", "1",
+        str(dest),
+    ]
+
+
+def extract_still(clip: Path, dest: Path, at: float) -> bool:
+    """Write one frame; True when a non-empty file landed."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        dest.unlink()
+    proc = subprocess.run(still_cmd(clip, dest, at), capture_output=True, text=True)
+    return proc.returncode == 0 and dest.is_file() and dest.stat().st_size > 0
+
+
+# --------------------------------------------------------------------------
 # reference video -> frame directory
 # --------------------------------------------------------------------------
 

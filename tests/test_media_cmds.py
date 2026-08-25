@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from moviemakr.errors import ConfigError
 from moviemakr.media import (
     NormalizeSpec,
     concat_cmd,
@@ -14,6 +15,8 @@ from moviemakr.media import (
     normalize_cmd,
     refvideo_filter,
     source_stamp,
+    still_cmd,
+    still_timestamps,
 )
 
 SRC = Path("/out/scenes/001-a.webm")
@@ -169,3 +172,46 @@ def test_source_stamp_changes_with_resolution(tmp_path):
     src = tmp_path / "clip.webm"
     src.write_bytes(b"x")
     assert source_stamp(src, 540, 960) != source_stamp(src, 544, 960)
+
+
+# --------------------------------------------------------------------------
+# stills
+# --------------------------------------------------------------------------
+
+
+def test_still_timestamps_are_segment_midpoints():
+    assert still_timestamps(4.0, 4) == [0.5, 1.5, 2.5, 3.5]
+
+
+def test_still_timestamps_never_hit_either_end():
+    """0.0 and the duration are the two blurriest frames of a turnaround."""
+    stamps = still_timestamps(3.75, 6)
+    assert len(stamps) == 6
+    assert stamps[0] > 0
+    assert stamps[-1] < 3.75
+    assert stamps == sorted(stamps)
+
+
+def test_one_still_is_the_middle_of_the_clip():
+    assert still_timestamps(10.0, 1) == [5.0]
+
+
+@pytest.mark.parametrize("duration,count", [(4.0, 0), (4.0, -1), (0.0, 6), (-2.0, 6)])
+def test_still_timestamps_rejects_bad_input(duration, count):
+    with pytest.raises(ConfigError):
+        still_timestamps(duration, count)
+
+
+def test_still_cmd_seeks_before_the_input():
+    """-ss ahead of -i is the fast seek; after it, ffmpeg decodes the whole clip."""
+    cmd = still_cmd(SRC, Path("/assets/cat-01.png"), 1.25)
+    assert cmd.index("-ss") < cmd.index("-i")
+    assert cmd[cmd.index("-ss") + 1] == "1.250"
+    assert cmd[cmd.index("-i") + 1] == str(SRC)
+
+
+def test_still_cmd_asks_for_exactly_one_frame():
+    cmd = still_cmd(SRC, Path("/assets/cat-01.png"), 0.5)
+    assert cmd[cmd.index("-frames:v") + 1] == "1"
+    assert "-update" in cmd
+    assert cmd[-1] == "/assets/cat-01.png"
