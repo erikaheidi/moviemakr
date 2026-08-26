@@ -1,0 +1,28 @@
+{# Polled fragment: replaced in place while a render runs over ssh. #}
+<table class="scenes">
+  <thead>
+    <tr>
+      <th>#</th><th>scene</th><th>state</th><th>length</th><th>elapsed</th><th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for scene in scenes %}
+    <tr class="state-{{ scene.state }}">
+      <td class="num">{{ scene.index }}</td>
+      <td>
+        {{ scene.id }}
+        {% if scene.chained %}<span class="chain" title="chained from the previous scene">⛓</span>{% endif %}
+      </td>
+      <td><span class="pill pill-{{ scene.state }}">{{ scene.state }}</span></td>
+      <td class="num">{{ scene.duration }}</td>
+      <td class="num">{{ scene.elapsed }}</td>
+      <td class="row-actions">
+        {% if scene.clip %}
+          <a href="/scripts/{{ key }}/clip/{{ scene.clip.name }}">play</a>
+          <a href="/scripts/{{ key }}/clip/{{ scene.clip.name }}?download=1" download>get</a>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}{{ slug }} · drafts · moviemakr{% endblock %}
+{% block body %}
+
+<h1>{{ slug }}</h1>
+<p class="stats"><code>{{ workspace.drafts_dir }}/{{ slug }}.md</code></p>
+
+{% if saved %}<p class="flash">Saved.</p>{% endif %}
+
+<form method="post" action="/drafts/{{ slug }}">
+  <textarea name="text" rows="24" spellcheck="true"
+            placeholder="Who is in it, what happens beat by beat, what each reference image is for, the mood and the sound.">{{ text }}</textarea>
+  <div class="form-actions">
+    <button type="submit">save</button>
+    <a href="/drafts">back</a>
+  </div>
+</form>
+
+<section>
+  <h2>Turn this into a script</h2>
+  <p class="hint">
+    The web app deliberately does not expand drafts — <code>h3-prompt-writing</code>
+    is an instruction-only skill, so an agent has to do it. At a terminal:
+  </p>
+  <pre class="cmd">claude "expand drafts/{{ slug }}.md into a moviemakr script using h3-prompt-writing"</pre>
+</section>
+
+<form method="post" action="/drafts/{{ slug }}/delete"
+      onsubmit="return confirm('Delete {{ slug }}.md?')">
+  <button type="submit" class="danger">delete draft</button>
+</form>
+
+{% endblock %}

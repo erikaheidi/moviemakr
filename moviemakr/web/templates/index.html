@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block body %}
+
+<h1>Scripts</h1>
+
+<p class="stats">
+  {{ script_count }} script{{ "" if script_count == 1 else "s" }}
+  {%- if invalid_count %}, <span class="bad">{{ invalid_count }} invalid</span>{% endif %} ·
+  {{ movie_count }} movie{{ "" if movie_count == 1 else "s" }} ({{ movie_size }}) ·
+  {{ asset_count }} assets ({{ asset_size }}) ·
+  {{ drafts|length }} draft{{ "" if drafts|length == 1 else "s" }}
+</p>
+
+{% if not scripts %}
+  <p class="empty">No scripts in <code>{{ workspace.scripts_dir }}</code> yet.</p>
+{% endif %}
+
+<ul class="cards">
+  {% for row in scripts %}
+  <li class="card {% if row.error %}card-bad{% endif %}">
+    <div class="card-head">
+      <a class="card-title" href="/scripts/{{ row.key }}">{{ row.name }}</a>
+      {% if row.has_movie %}<span class="pill pill-good">movie</span>{% endif %}
+    </div>
+    <div class="card-meta">
+      <code>{{ row.key }}</code>
+      {% if row.modified %} · {{ row.modified.strftime("%d %b %H:%M") }}{% endif %}
+    </div>
+    {% if row.error %}
+      <p class="error">{{ row.error.splitlines()[0] }}</p>
+    {% else %}
+      <div class="card-meta">
+        {{ row.progress }} scenes rendered
+        {%- if row.has_movie %} · {{ human_size(row.movie_size) }}{% endif %}
+      </div>
+      {% if row.has_movie %}
+        <div class="card-actions">
+          <a href="/scripts/{{ row.key }}">open</a>
+          <a href="/scripts/{{ row.key }}/movie?download=1" download>download</a>
+        </div>
+      {% endif %}
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+
+{% if drafts %}
+<h2>Recent drafts</h2>
+<ul class="cards">
+  {% for draft in drafts[:5] %}
+  <li class="card">
+    <a class="card-title" href="/drafts/{{ draft.slug }}">{{ draft.title }}</a>
+    <div class="card-meta">
+      {% if draft.modified %}{{ draft.modified.strftime("%d %b %H:%M") }}{% endif %}
+    </div>
+    <p class="excerpt">{{ draft.excerpt }}</p>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+{% endblock %}

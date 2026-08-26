@@ -1,0 +1,204 @@
+# niulai-cat-sheet - a one-character turnaround sheet, not a movie.
+#
+# assets/niulai.png is a still from the viral Chinese CG film "Niu Lai", which
+# took off for how cheap its animation looks: animal characters built like people
+# in full-body mascot costumes, standing UPRIGHT ON TWO LEGS, rendered with the
+# specific shortcomings of a low-budget 3D pipeline.
+#
+# This script defines an original cat in that style and renders a turnaround, so
+# that stills pulled from the clip can be reused as ref_images in later scripts.
+#
+#   ./moviemakr.py render scripts/h3/niulai-cat-sheet.yaml --scene probe   # ~8 min
+#   ./moviemakr.py render scripts/h3/niulai-cat-sheet.yaml --scene turnaround
+#   ./moviemakr.py stills scripts/h3/niulai-cat-sheet.yaml --scene turnaround \
+#       --count 6 --prefix niulai-cat
+#
+# ---------------------------------------------------------------------------
+# WHAT THE FIRST RENDER TAUGHT US - read this before editing the prompt
+# ---------------------------------------------------------------------------
+# Attempt 1 (2026-08-24, 46 min) got the STRUCTURE completely right and the
+# MATERIAL completely wrong. It stayed bipedal for all 90 frames, rotated
+# cleanly through to a back view, and carried the markings exactly as written.
+# It also came out as a polished modern 3D character: individually rendered fur
+# strands, subsurface scattering through the ears, ambient occlusion in the
+# belly fold, a soft contact shadow and a gradient studio backdrop.
+#
+# The prompt had said "flat matte plush fur showing no individual strands" and
+# "simple low-detail geometry". So the model did not miss a cue - it read an
+# explicit instruction and overrode it.
+#
+# The lesson is the one the H3 guide states outright: "prefer concrete visual
+# details over abstract words". Attempt 1 leaned on "deliberately crude" and
+# "low-budget", which are aesthetic verdicts with no pixels attached, and they
+# did nothing. What DID survive was "standing on two hind legs, weight flat on
+# both hind paws, shoulders squared" - concrete, repeated, obeyed perfectly.
+#
+# So this version never asks for less polish. It names the specific artifacts of
+# a cheap 3D pipeline as positive facts to render:
+#
+#   - fur painted on as a flat texture map, silhouette a clean unbroken curve
+#   - uniform plastic sheen, one hard specular dot per eye and on the nose
+#   - opaque ears, no light passing through
+#   - flat polygon facets on curved surfaces
+#   - texture stretching and pinching at the shoulders and hips
+#   - one plain oval shadow under the feet, not a wrapped contact shadow
+#   - head, neck and torso rotating as one rigid piece
+#   - no secondary motion; nothing trails, overlaps or follows through
+#   - hind paws sliding across the floor instead of planting
+#   - a dead unblinking stare
+#
+# retention_analysis also negates the polish by name (no rendered strands, no
+# subsurface scattering, no ambient occlusion, no soft contact shadow, no
+# depth-of-field), because attempt 1 proves a positive description alone loses.
+#
+# detailed_description runs ~370 words here rather than the house 200-250 - the
+# material artifacts cost most of that. Worth noting it lands inside the H3
+# guide's own 350-500 range for generation tasks; the tighter house range exists
+# because a story beat carries far less information than a material spec does.
+#
+# ---------------------------------------------------------------------------
+# THE PROBE SCENE
+# ---------------------------------------------------------------------------
+# Style shows up in frame one, so there is no reason to spend 46 minutes finding
+# out that a material rewrite failed. From attempt 1's log: sampling was 2540s
+# of the 2785s total (91%), running the default 20 steps at ~127 s/step for 90
+# frames. Per-step cost scales with frame count, so the probe's 10 steps at 30
+# frames lands near 10 x 42s ~= 7 min of sampling, call it 8 with overhead.
+#
+# Both scenes share ONE prompt through the YAML anchor `&look` / `*look`, so the
+# probe cannot silently drift out of sync with the thing it is predicting.
+# Always iterate on `--scene probe`, and only spend the full render once the
+# material reads right.
+#
+# Caveat: 10 steps has its own softness and noise. Judge MATERIAL from the probe
+# - strands vs painted texture, sheen, ear opacity, shadow shape - and do not
+# read its general lack of crispness as the cheap-CG look landing.
+#
+# ---------------------------------------------------------------------------
+# <Picture 1> IS A STYLE REFERENCE, NOT A SUBJECT REFERENCE
+# ---------------------------------------------------------------------------
+# niulai.png is the only ref, and it is here for the LOOK, not its contents.
+# retention_analysis carries the weight: the yellow bull, the orange calf, the
+# leopard cub, the sunset, the purple rocks and the sand are each named as
+# absent. Naming them individually is not padding - "just the cat" is not
+# enough, and the bull walks back into frame. Same failure mode as the NO HUMANS
+# note in josy-skate-dream.yaml.
+#
+# Note also what attempt 1 proved about the limits of a style ref: niulai.png
+# was the ONLY reference, with nothing competing with it, and the output still
+# came out materially nothing like it. Ref2VA references steer identity, pose
+# and markings far more strongly than they steer shading and material. The text
+# has to carry the material.
+#
+# ---------------------------------------------------------------------------
+# SAY "BIPEDAL" MORE TIMES THAN FEELS NECESSARY
+# ---------------------------------------------------------------------------
+# A cat is the strongest four-legged prior this model has. The upright stance is
+# stated in the first sentence of <Subject 2>, again in its retention line, and
+# again in detailed_description. This worked in attempt 1 - do not thin it out.
+#
+# ---------------------------------------------------------------------------
+# GREY SWEEP, NOT THE PLATE'S DESERT
+# ---------------------------------------------------------------------------
+# Deliberately against the reference. A baked-in sunset would contaminate every
+# downstream scene that uses an extracted still as a ref image. Attempt 1 gave
+# the backdrop a soft gradient and vignette anyway, so this version specifies
+# "one uniform tone, no gradient, no vignette" explicitly.
+#
+# ---------------------------------------------------------------------------
+# ONE REF MEANS ONE LABEL
+# ---------------------------------------------------------------------------
+# chain_from_previous is off and there are no anchors, so each scene passes
+# exactly one -r. sd_args only appends --increase-ref-index when there is more
+# than one reference (docker.py), so <Picture 1> is the only valid label here.
+# Adding a second ref later means renumbering the prompt.
+#
+# ---------------------------------------------------------------------------
+# IF THE TURN COMES OUT BLURRED
+# ---------------------------------------------------------------------------
+# Halve it to a 180 degree front-to-back rotation. Do NOT raise video_frames to
+# buy time: at 544x960 sd-cli rounds 100 up to 107 and 110 up to 124, and 124
+# DeviceLosts at the VAE stage.
+#
+# Housekeeping: attempt 1 rendered as 001-turnaround.webm. The probe now takes
+# index 1, so the sheet is 002-turnaround and that old clip is orphaned in
+# renders/niulai-cat-sheet/scenes/. Harmless - nothing looks it up by that name
+# any more - but delete it if you want the directory clean.
+
+name: niulai-cat-sheet
+
+model:
+  root: /home/erika/Projects/ai-models          # host dir, mounted read-only at /models
+  diffusion_model: minimax-h3/minimax_h3_ref2va_pruned-Q8_0.gguf
+  llm:             minimax-h3/qwen3vl_32b_minimax_h3-Q4_K_M.gguf
+  vae:             minimax-h3/minimax_h3_video_vae_fp16.safetensors
+  audio_vae:       minimax-h3/minimax_h3_audio_vae_fp32.safetensors
+
+docker:
+  image: ghcr.io/leejet/stable-diffusion.cpp:master-vulkan
+  devices: [/dev/dri/card1, /dev/dri/renderD128, /dev/kfd]
+  run_as_current_user: true
+
+defaults:
+  # Portrait, as every other script in scripts/h3/ - and it happens to suit a
+  # full-body turnaround, which is a tall subject in an empty frame.
+  width: 544
+  height: 960
+  fps: 24
+  video_frames: 90          # 90 stays 90. See the blurred-turn note above.
+  cfg_scale: 1.0
+  seed: 42
+  negative_prompt: ""       # no effect at cfg_scale 1.0 - CFG is off
+  style_suffix: ""          # MUST stay empty on H3-structured prompts
+  extra_args: ["--diffusion-fa", "--mmap", "--backend", "te=cpu"]
+
+continuity:
+  # Empty on purpose. niulai.png goes in as each scene's own ref_image so that it
+  # is unambiguously <Picture 1>, and the two scenes are independent takes on the
+  # same prompt rather than a sequence.
+  anchors: []
+  anchor_videos: []         # --ref-video crashes the GPU on this box
+  chain_from_previous: false
+
+output:
+  container: mp4
+  audio: strip              # a reference sheet has nothing to listen to
+  music: null
+  music_gain_db: -18
+
+scenes:
+  # -------------------------------------------------------------------------
+  # 1. The probe - same prompt, cheap settings. Iterate here.
+  # -------------------------------------------------------------------------
+  - id: probe
+    steps: 10               # vs the default 20
+    video_frames: 30        # vs 90; per-step cost scales with frame count
+    ref_images:
+      - niulai.png
+    prompt: &look |-
+      subject_definitions:
+      <Subject 1> is the rendering and animation style of <Picture 1>, defined by the specific shortcuts of a cheap 3D pipeline: character bodies are smooth solid shells with the fur painted onto them as a flat texture map, so every silhouette edge is a clean unbroken curve with no fur strands, no stray hairs and no soft fringe breaking the outline; the surfaces carry a uniform semi-gloss plastic sheen with one small hard white specular dot on each eye and one on the nose; the ears are fully opaque, with no light passing through them and no warm glow at their edges; curved surfaces show flat polygon facets along the skull, shoulders and hips instead of smooth curvature; the painted texture visibly stretches and pinches where the limbs meet the body; lighting is a single flat frontal source with no bounce light and no darkening in the creases; and the character is grounded by one plain soft-edged oval shadow directly beneath the feet.
+      <Subject 2> is a new character built in the style of <Subject 1> and appearing nowhere in <Picture 1>: a rounded grey-and-white mackerel tabby cat, fully bipedal, standing upright on its two hind legs in a human posture with its weight flat on both hind paws, its short arms hanging down and slightly out from its sides, and its shoulders squared. It has a broad rounded head far too large for its body, small rounded ears set wide apart, big flat green eyes, dark grey human-style eyebrow patches above them, a short pale muzzle with a small pink nose, a white chest bib, white mitten paws on all four limbs, grey mackerel tabby striping over its back and flanks, and a thick banded tail hanging down behind its legs. Its whole body is one smooth solid shell with the striping and the white bib painted onto it as a flat texture, and its outline against the background is a clean unbroken curve with no fur strands anywhere along it.
+
+      summary:
+      [reference generation] The target video is a character-sheet turnaround: <Subject 2>, an original bipedal cat character rendered with the cheap-pipeline shortcomings of <Subject 1>, stands upright and alone on a flat grey backdrop and rotates mechanically on the spot through one full turn, presenting front, three-quarter, side and back views. <Picture 1> supplies only the rendering and animation style of <Subject 1>; none of its characters and none of its landscape appear.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): partially_preserved - the smooth solid shells with painted-on fur texture, the unbroken strand-free silhouette, the uniform plastic sheen and hard specular dots, the opaque ears, the flat polygon facets on curved surfaces, the texture stretching at the joints, the single flat frontal light and the plain oval floor shadow of <Picture 1> are retained, as is its upright bipedal construction. None of the polish of a modern high-end 3D production appears anywhere in the target video: there are no individually rendered fur strands, no soft fur fringe on the silhouette, no light scattering through the ears, no ambient shadowing in the folds of the body, no soft wrapped contact shadow and no depth-of-field blur. Nothing else from <Picture 1> is retained either: the large yellow horned bull, the small orange calf and the spotted leopard cub do not appear, and neither does the sunset sky, the orange clouds, the purple rock formations, the conifers, the sand or the horizon line.
+      <Subject 2> (appears in [Shot 1]): attribute_transfer - the cheap-pipeline rendering style and the bipedal construction of <Subject 1> are transferred onto a new cat character that is not present in <Picture 1>. <Subject 2> stands on its two hind legs for the entire shot: it never drops onto all fours, never crouches onto its front paws, and never moves like a four-legged animal at any point.
+
+      detailed_description:
+      The target video is cheaply produced 3D CG animation in the style of <Subject 1>: smooth plastic-shelled characters with fur painted on as a flat texture, one flat frontal light, and stiff mechanical movement, recorded as a plain character-sheet turnaround on a locked-off camera.
+      [Shot 1] The frame is a flat mid-grey backdrop of one uniform tone, with no gradient, no vignette, no horizon line, no props and no scenery. <Subject 2>, the rounded grey-and-white bipedal tabby cat, stands alone in the centre of it, upright on its two hind legs and framed head to toe, from its flat hind paws to the tips of its small rounded ears. One plain soft-edged oval shadow sits on the floor directly beneath its feet. Its outline reads as a clean unbroken curve against the grey with no fur strands and no soft fringe anywhere along the edge, and a single small hard white highlight sits on each flat green eye and one on the pink nose. Its short arms hang down and slightly out from its sides, its shoulders are squared to the camera, and its thick banded tail hangs stiffly behind its legs. It holds this standing pose and turns on the spot, pivoting in place on its flat hind feet and staying fully upright throughout the whole rotation. The turn is mechanical and perfectly even, like a model on a rotating platform: the head, neck and torso swing round together as one rigid piece with no weight shift and no counter-rotation, the arms stay locked at the same angle instead of swinging, the tail holds its curve without trailing behind or overlapping, and the hind paws slide across the floor rather than planting and lifting. The painted stripes stretch and pinch where the arms pass the torso. The rotation carries the cat through a front view, a right three-quarter view, a full right side profile, a back view showing the striping over its spine, a left three-quarter view, and around to face front again. Its big flat green eyes stare straight ahead and never blink. The camera does not move, does not push in and does not cut. No other character and no scenery appear at any point.
+
+      overall_soundscape: Quiet, dead studio room tone throughout, close and slightly padded, with no reverb tail. A faint dry scuff of the hind paws sliding on the floor as the body rotates. No speech and no animal vocalisation.
+
+      non_diegetic_music: None. No background music of any kind plays over the target video.
+
+  # -------------------------------------------------------------------------
+  # 2. The real sheet. Same prompt via the anchor above, full settings.
+  # -------------------------------------------------------------------------
+  - id: turnaround
+    ref_images:
+      - niulai.png
+    prompt: *look

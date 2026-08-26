@@ -9,13 +9,34 @@ constraint into a workflow: you write the whole movie as an ordered list of scen
 prompts, and it renders them in sequence, resumes where it left off, and assembles
 the result.
 
+## The workspace
+
+Your content — `scripts/`, `assets/`, `drafts/`, `renders/` — lives in a
+**workspace** directory, separate from this checkout, so the tool can be
+installed anywhere and several workspaces can coexist:
+
+```
+~/moviemakr-workspace/
+  scripts/     the YAML, nested however you like
+  assets/      reference images
+  drafts/      plain-prose notes, before they become scripts
+  renders/     output; disposable, reproducible from the scripts
+```
+
+Point at it with `--workspace PATH` or `$MOVIEMAKR_WORKSPACE`. With neither, the
+checkout itself is used, which is how this used to work.
+
 ## Usage
 
 ```bash
-./moviemakr.py render scripts/example.yaml --dry-run   # print commands, render nothing
-./moviemakr.py render scripts/example.yaml             # render everything, then assemble
-./moviemakr.py status scripts/example.yaml             # per-scene state and real durations
-./moviemakr.py assemble scripts/example.yaml           # re-stitch from existing clips
+export MOVIEMAKR_WORKSPACE=~/moviemakr-workspace
+cd "$MOVIEMAKR_WORKSPACE"
+
+moviemakr render   scripts/beach.yaml --dry-run   # print commands, render nothing
+moviemakr render   scripts/beach.yaml             # render everything, then assemble
+moviemakr status   scripts/beach.yaml             # per-scene state and real durations
+moviemakr assemble scripts/beach.yaml             # re-stitch from existing clips
+moviemakr serve                                   # browse it all in a browser
 ```
 
 Useful flags on `render`:
@@ -51,7 +72,7 @@ was rendered:
 
 ## Writing a script
 
-See [`scripts/example.yaml`](scripts/example.yaml) for a fully commented template.
+See [`examples/example.yaml`](examples/example.yaml) for a fully commented template.
 The shape is: shared `model` paths, `docker` settings, `defaults` that apply to
 every scene, `continuity` and `output` policy, then an ordered `scenes` list.
 
@@ -162,7 +183,7 @@ run exits non-zero if anything failed. Use `--halt-on-failure` to stop instead.
 ## Output layout
 
 ```
-renders/<script-name>/
+<workspace>/renders/<script-name>/
   scenes/     001-opening.webm        raw model output (always WebM)
   frames/     001-opening.last.png    final frame, used for chaining
   normalized/ 001-opening.mp4         uniform codecs/size/fps for concat
@@ -175,6 +196,72 @@ renders/<script-name>/
 
 `scenes/` is always `.webm` because that is what `sd-cli` writes; only
 `normalized/` and the finished movie follow `output.container`.
+
+## Browsing it from a phone (`moviemakr serve`)
+
+Rendering wants a GPU box; looking at the results does not. `moviemakr serve`
+puts the workspace on a web page — scripts and their per-scene state, movies
+that play and download in the browser, logs, drafts, and asset upload — so you
+stop sftp'ing into the render machine.
+
+```bash
+pip install 'moviemakr[web]'
+moviemakr serve --host 0.0.0.0            # then reach it over your tailnet
+tailscale serve --bg 8765                 # …or with HTTPS and a real hostname
+```
+
+Put it behind `tailscale serve`, not Funnel: tailnet-only *is* the auth model,
+and the app hands out workspace files.
+
+It is deliberately **read-only toward rendering** — no start, no cancel, no job
+queue. Renders stay on the CLI over ssh, where the terminal already does a
+better job. What the page adds is everything around them. The scene table has a
+`live` toggle that polls while an ssh-launched render is running, so you can
+watch progress from the sofa.
+
+Uploading matters more than it looks: reference images have to live under
+`assets/` for the container to see them, so being able to push a photo there
+from your phone is what makes drafting away from the desk possible. Uploads are
+resized to 1280px on the long edge by default, since the workspace is a git repo.
+
+### Drafts
+
+`drafts/*.md` are plain prose kept apart from finished scripts — who is in the
+scene, the beats, the mood, what each reference is for. Write one on your phone;
+turn it into a script later.
+
+The web app does not expand drafts, because it cannot: `h3-prompt-writing` is an
+instruction-only skill, so an agent has to do the work. Each draft page shows the
+command:
+
+```bash
+claude "expand drafts/beach-picnic.md into a moviemakr script using h3-prompt-writing"
+```
+
+## Moving your data into a workspace
+
+If you have been running with everything inside the checkout:
+
+```bash
+WS=~/moviemakr-workspace
+mkdir -p "$WS"/{scripts,assets,drafts,renders}
+mv scripts/* assets/* "$WS"/scripts/ "$WS"/assets/   # adjust per directory
+printf 'renders/\n.cache/\n' > "$WS/.gitignore"
+git -C "$WS" init && git -C "$WS" add -A && git -C "$WS" commit -m 'workspace'
+
+echo 'export MOVIEMAKR_WORKSPACE='"$WS" >> ~/.zshrc
+```
+
+Then confirm nothing moved that should not have:
+
+```bash
+moviemakr render "$WS/scripts/<something>.yaml" --dry-run
+```
+
+The three `-v` mounts should now point into the workspace while the
+container-side `/assets/…` and `/out/…` paths stay exactly as before. They will:
+fingerprints are built from container paths and reference *content*, so
+relocating a workspace does not invalidate a single scene.
 
 ## Notes
 
@@ -206,7 +293,8 @@ renders/<script-name>/
 
 ## Requirements
 
-Docker, ffmpeg/ffprobe, Python 3.11+ with PyYAML.
+Docker, ffmpeg/ffprobe, Python 3.11+ with PyYAML. `moviemakr serve` adds the
+`web` extra (FastAPI, uvicorn, Jinja2); the rest of the tool works without it.
 
 `./moviemakr.py` is a launcher for the `moviemakr/` package next to it, so it
 runs straight from a checkout with no install. `pip install -e .` additionally
@@ -215,13 +303,15 @@ provides a `moviemakr` command; `python -m moviemakr` works either way.
 ## Development
 
 ```bash
-uv venv .venv && uv pip install --python .venv/bin/python pytest PyYAML
+uv venv .venv && uv pip install --python .venv/bin/python -e '.[web,dev]'
 .venv/bin/python -m pytest
 ```
 
 The suite needs no Docker, GPU, or ffmpeg: every path reaches `sd-cli` through
 `to_container`, so commands and fingerprints are built entirely from
-container-side paths and can be checked in a temp directory.
+container-side paths and can be checked in a temp directory. The web tests hold
+that line too — ffmpeg is stubbed, and the route tests `importorskip` FastAPI,
+so `pytest PyYAML` alone still runs everything else.
 
 `tests/test_fingerprint.py` holds golden hashes. A scene is skipped when its
 stored fingerprint matches, so a change there means every scene of every existing
@@ -234,13 +324,15 @@ The pipeline is one module per stage, in dependency order:
 | `errors.py` | `ConfigError`, unknown-key checking with suggestions |
 | `report.py` | duration and summary formatting |
 | `state.py` | reading and writing `state.json` |
-| `layout.py` | `RunLayout` — every run-dir path, and host ↔ container mapping |
+| `layout.py` | `Workspace`, `RunLayout` — every path, and host ↔ container mapping |
 | `media.py` | ffprobe/ffmpeg runners plus pure command builders |
 | `config.py` | `SceneSettings`, `Scene`, `Script`, `load_script` |
 | `docker.py` | `sd_args`, `fingerprint`, `docker_argv`, GPU preflight |
 | `assemble.py` | normalize → concat → optional music mix |
 | `render.py` | `RenderOptions` and the render loop |
+| `status.py` | `scene_rows` — per-scene state, shared by `status` and the web view |
 | `cli.py` | argument parsing and the command bodies |
+| `web/` | the optional HTTP view; only `web/app.py` imports FastAPI |
 
 Adding a scene setting means adding a field to `SceneSettings` and a coercer to
 `_COERCERS` in `config.py`; unknown keys are rejected, so a setting that is not

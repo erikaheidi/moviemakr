@@ -11,15 +11,17 @@ from pathlib import Path
 
 from .assemble import assemble
 from .config import Script, load_script
-from .docker import fingerprint, format_argv
+from .docker import format_argv
 from .errors import ConfigError
-from .media import probe_clip
-from .render import RenderOptions, render, resolve_refs
+from .layout import WORKSPACE_ENV, Workspace
+from .media import extract_still, probe_clip, still_timestamps
+from .render import RenderOptions, render
 from .report import print_summary
-from .state import load_state, scene_entry
+from .status import scene_rows
 
-# The package lives one level below the project root, which owns assets/ and
-# renders/ and anchors every relative path in a script.
+# Where the data used to live, back when it sat inside the checkout. Kept only
+# as the last fallback for `Workspace.resolve`, so an invocation with neither
+# --workspace nor $MOVIEMAKR_WORKSPACE behaves exactly as it did before.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -30,7 +32,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_render = sub.add_parser("render", help="render scenes then assemble the movie")
+    # Shared by every subcommand: which data root to read scripts/assets from
+    # and write renders to.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--workspace", type=Path, default=None,
+        help=f"data root holding scripts/, assets/, drafts/ and renders/ "
+             f"(default: ${WORKSPACE_ENV}, else the moviemakr checkout)",
+    )
+
+    p_render = sub.add_parser("render", parents=[common],
+                              help="render scenes then assemble the movie")
     p_render.add_argument("script", type=Path)
     group = p_render.add_mutually_exclusive_group()
     group.add_argument("--only", help="scene indices, e.g. 2,4-6")
@@ -43,11 +55,29 @@ def build_parser() -> argparse.ArgumentParser:
     p_render.add_argument("--allow-cpu", action="store_true",
                           help="skip the GPU preflight check and render even without a GPU")
 
-    p_asm = sub.add_parser("assemble", help="re-assemble from existing clips")
+    p_asm = sub.add_parser("assemble", parents=[common],
+                           help="re-assemble from existing clips")
     p_asm.add_argument("script", type=Path)
 
-    p_status = sub.add_parser("status", help="show per-scene state")
+    p_status = sub.add_parser("status", parents=[common], help="show per-scene state")
     p_status.add_argument("script", type=Path)
+
+    p_stills = sub.add_parser(
+        "stills", parents=[common],
+        help="extract reference stills from a rendered scene clip")
+    p_stills.add_argument("script", type=Path)
+    p_stills.add_argument("--scene", help="scene id (default: the only scene)")
+    p_stills.add_argument("--count", type=int, default=6, help="stills to pull (default 6)")
+    p_stills.add_argument("--dest", type=Path,
+                          help="output directory (default: the workspace's assets/)")
+    p_stills.add_argument("--prefix", help="filename prefix (default: the scene slug)")
+
+    p_serve = sub.add_parser("serve", parents=[common],
+                             help="browse the workspace over HTTP")
+    p_serve.add_argument("--host", default="127.0.0.1",
+                         help="bind address (default 127.0.0.1; use 0.0.0.0 behind tailscale serve)")
+    p_serve.add_argument("--port", type=int, default=8765)
+    p_serve.add_argument("--reload", action="store_true", help="auto-reload on code changes")
 
     return parser
 
@@ -55,42 +85,8 @@ def build_parser() -> argparse.ArgumentParser:
 def cmd_status(script: Script) -> int:
     """Per-scene state, including whether a render would actually redo anything."""
     layout = script.layout
-    state = load_state(layout.state_file)
-
-    results = []
-    prev_frame: Path | None = None
-    for scene in script.scenes:
-        clip = layout.clip(scene.slug)
-        entry = scene_entry(state, scene.id)
-
-        if clip.is_file() and clip.stat().st_size > 0:
-            probe = entry.get("probe") or probe_clip(clip)
-            stored = entry.get("fingerprint")
-            if stored is None:
-                scene_state = entry.get("state", "rendered")
-            else:
-                refs, _ = resolve_refs(scene, prev_frame, dry_run=False)
-                dirs = [
-                    layout.refvideo_dir(src, scene.settings.width, scene.settings.height)
-                    for src in scene.ref_videos
-                ]
-                current = fingerprint(scene, script, refs, dirs)
-                scene_state = "rendered" if stored == current else "stale"
-        else:
-            probe = {}
-            scene_state = entry.get("state", "pending")
-
-        results.append({
-            "scene": scene,
-            "state": scene_state,
-            "probe": probe,
-            "elapsed": entry.get("elapsed"),
-        })
-        frame = layout.frame(scene.slug)
-        prev_frame = frame if frame.is_file() else None
-
     movie = layout.movie
-    print_summary(results, layout.logs_dir, movie if movie.is_file() else None)
+    print_summary(scene_rows(script), layout.logs_dir, movie if movie.is_file() else None)
     return 0
 
 
@@ -109,6 +105,57 @@ def cmd_assemble(script: Script) -> int:
     return 0
 
 
+def pick_scene(script: Script, scene_id: str | None):
+    """The scene named by --scene, or the only one there is."""
+    if scene_id is None:
+        if len(script.scenes) == 1:
+            return script.scenes[0]
+        ids = ", ".join(s.id for s in script.scenes)
+        raise ConfigError(
+            f"script has {len(script.scenes)} scenes - name one with --scene: {ids}")
+    for scene in script.scenes:
+        if scene.id == scene_id:
+            return scene
+    ids = ", ".join(s.id for s in script.scenes)
+    raise ConfigError(f"no scene with id {scene_id!r} - available: {ids}")
+
+
+def cmd_stills(script: Script, args) -> int:
+    """Pull evenly spaced frames out of one rendered clip, into assets/.
+
+    Defaults to `script.assets_dir` - the very directory this script's layout
+    mounts at /assets - because a reference *image* has to live under that mount
+    to survive `RunLayout.to_container()`; a still written anywhere else cannot
+    be handed back to sd-cli as a ref.
+    """
+    scene = pick_scene(script, args.scene)
+    clip = script.layout.clip(scene.slug)
+    if not clip.is_file() or clip.stat().st_size == 0:
+        print(f"error: no rendered clip for scene {scene.id!r}: {clip}", file=sys.stderr)
+        return 1
+
+    # Measured, never assumed - the model rounds video_frames up.
+    duration = probe_clip(clip).get("duration") or 0.0
+    stamps = still_timestamps(duration, args.count)
+
+    dest_dir = (args.dest or script.assets_dir).resolve()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    prefix = args.prefix or scene.slug
+
+    failed = 0
+    for n, at in enumerate(stamps, start=1):
+        dest = dest_dir / f"{prefix}-{n:02d}.png"
+        if extract_still(clip, dest, at):
+            print(f"  {at:6.2f}s  {dest}")
+        else:
+            print(f"  {at:6.2f}s  FAILED  {dest}", file=sys.stderr)
+            failed += 1
+
+    written = len(stamps) - failed
+    print(f"\n{written}/{len(stamps)} stills in {dest_dir}")
+    return 1 if failed else 0
+
+
 def check_tools(command: str, dry_run: bool) -> int | None:
     for tool in ("ffmpeg", "ffprobe"):
         if shutil.which(tool) is None:
@@ -120,6 +167,23 @@ def check_tools(command: str, dry_run: bool) -> int | None:
     return None
 
 
+def cmd_serve(args: argparse.Namespace, workspace: Workspace) -> int:
+    """The core CLI must work without FastAPI installed, so ask before serving.
+
+    `moviemakr.web` imports only the stdlib and defers the rest, so importing it
+    proves nothing about the extra - the ImportError would otherwise surface as
+    a traceback from inside uvicorn, well past any guard here.
+    """
+    from .web import missing_modules, run_server
+
+    if missing := missing_modules():
+        print(f"error: the web extra is not installed (missing {', '.join(missing)})",
+              file=sys.stderr)
+        print("  pip install 'moviemakr[web]'", file=sys.stderr)
+        return 2
+    return run_server(workspace, host=args.host, port=args.port, reload=args.reload)
+
+
 def main(argv: Sequence[str] | None = None, project_root: Path | None = None) -> int:
     args = build_parser().parse_args(argv)
     project_root = project_root or PROJECT_ROOT
@@ -129,7 +193,12 @@ def main(argv: Sequence[str] | None = None, project_root: Path | None = None) ->
         return code
 
     try:
-        script = load_script(args.script.resolve(), project_root)
+        workspace = Workspace.resolve(args.workspace, default=project_root)
+
+        if args.command == "serve":
+            return cmd_serve(args, workspace)
+
+        script = load_script(args.script.resolve(), workspace)
 
         if args.command == "render":
             return render(script, RenderOptions.from_args(args))
@@ -137,6 +206,8 @@ def main(argv: Sequence[str] | None = None, project_root: Path | None = None) ->
             return cmd_assemble(script)
         if args.command == "status":
             return cmd_status(script)
+        if args.command == "stills":
+            return cmd_stills(script, args)
     except ConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

@@ -64,9 +64,9 @@ def test_no_scenes(load):
         load({"scenes": []})
 
 
-def test_missing_script_file(project_root):
+def test_missing_script_file(project_root, workspace):
     with pytest.raises(ConfigError, match="script not found"):
-        load_script(project_root / "nope.yaml", project_root)
+        load_script(project_root / "nope.yaml", workspace)
 
 
 def test_model_root_must_be_a_directory(load, tmp_path):
@@ -230,3 +230,30 @@ def test_multiline_h3_prompt_is_untouched_without_a_suffix(load):
     prompt = "subject_definitions: <Subject 1> a cat\nsummary: it cooks\n"
     script = load({"scenes": [{"id": "a", "prompt": prompt}]})
     assert script.scenes[0].full_prompt() == prompt
+
+
+def test_malformed_yaml_is_a_config_error(project_root, workspace):
+    """A syntax error must arrive as ConfigError like every other bad script.
+
+    Callers guard ConfigError and nothing else, so a raw YAMLError escaping
+    here is a traceback on the CLI and a 500 on the web index.
+    """
+    path = project_root / "broken.yaml"
+    path.write_text("this: [is: not: valid: yaml\n  bad indent\n")
+    with pytest.raises(ConfigError, match="invalid YAML"):
+        load_script(path, workspace)
+
+
+def test_malformed_yaml_error_names_the_file(project_root, workspace):
+    path = project_root / "broken.yaml"
+    path.write_text("a: [1, 2\nb: 3\n")
+    with pytest.raises(ConfigError, match="broken.yaml"):
+        load_script(path, workspace)
+
+
+def test_empty_script_is_a_config_error_not_a_crash(project_root, workspace):
+    """`safe_load` returns None here, which the `or {}` turns into no scenes."""
+    path = project_root / "empty.yaml"
+    path.write_text("")
+    with pytest.raises(ConfigError):
+        load_script(path, workspace)
