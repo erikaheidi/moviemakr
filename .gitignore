@@ -5,5 +5,9 @@ __pycache__/
 .ruff_cache/
 *.mp4
 *.webm
-# Rendered output: large, reproducible from the scripts.
+# Data lives in a workspace ($MOVIEMAKR_WORKSPACE), never in the checkout.
+assets/
+scripts/
+drafts/
 renders/
+.cache/

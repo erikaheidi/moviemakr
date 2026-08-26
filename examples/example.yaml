@@ -1,6 +1,8 @@
-# Example movie script.
-#   ./moviemakr.py render scripts/example.yaml --dry-run
-#   ./moviemakr.py render scripts/example.yaml
+# Example movie script. Copy it into your workspace's scripts/ - it does not
+# run from here, and $MOVIEMAKR_WORKSPACE (or --workspace) must be set:
+#   cp examples/example.yaml "$MOVIEMAKR_WORKSPACE/scripts/"
+#   moviemakr render "$MOVIEMAKR_WORKSPACE/scripts/example.yaml" --dry-run
+#   moviemakr render "$MOVIEMAKR_WORKSPACE/scripts/example.yaml"
 name: cats-movie
 
 model:

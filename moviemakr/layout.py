@@ -45,9 +45,10 @@ def slugify(text: str) -> str:
 class Workspace:
     """The data root: scripts, assets, drafts and renders.
 
-    Held separately from the code so the package can be installed anywhere and
-    several instances can run against different content. `RunLayout` still takes
-    its three mount bases explicitly - this type only decides where they are.
+    Always separate from the code checkout, so the package can be installed
+    anywhere and several instances can run against different content.
+    `RunLayout` still takes its three mount bases explicitly - this type only
+    decides where they are.
     """
 
     root: Path
@@ -57,17 +58,18 @@ class Workspace:
         return cls(root=Path(root).expanduser().resolve())
 
     @classmethod
-    def resolve(cls, explicit: Path | None = None, *, default: Path | None = None) -> "Workspace":
-        """Pick the workspace: explicit argument, then $MOVIEMAKR_WORKSPACE, then `default`.
+    def resolve(cls, explicit: Path | None = None) -> "Workspace":
+        """Pick the workspace: the explicit argument, else $MOVIEMAKR_WORKSPACE.
 
-        `default` is the caller's fallback (the CLI passes the repo root, which
-        is where the data used to live), so an existing invocation with neither
-        the flag nor the env var keeps working.
+        There is deliberately no third fallback. The checkout used to serve as
+        one, which meant a mistyped or forgotten workspace resolved to a valid
+        directory and failed later, confusingly - or worse, quietly wrote a new
+        `assets/` into the code tree.
         """
         chosen = explicit
         if chosen is None:
             from_env = os.environ.get(WORKSPACE_ENV)
-            chosen = Path(from_env) if from_env else default
+            chosen = Path(from_env) if from_env else None
         if chosen is None:
             raise ConfigError(
                 f"no workspace: pass --workspace or set {WORKSPACE_ENV}"

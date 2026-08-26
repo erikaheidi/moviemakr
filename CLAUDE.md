@@ -18,14 +18,19 @@ anything. Dependencies: Docker, ffmpeg/ffprobe on PATH, Python 3.11+ with PyYAML
 ## The workspace (code and data are separate)
 
 The **data** — `scripts/`, `assets/`, `drafts/`, `renders/` — lives in a
-*workspace* directory that is not the code checkout. `Workspace` (in
-`layout.py`) owns that split, and `Workspace.resolve` picks the root in this
-order:
+*workspace* directory that is not the code checkout. **None of it is in this
+repo**, and the checkout is not a fallback workspace. `Workspace` (in
+`layout.py`) owns that split, and `Workspace.resolve` picks the root from
+exactly two sources:
 
 1. `--workspace PATH`
 2. `$MOVIEMAKR_WORKSPACE`
-3. `cli.PROJECT_ROOT`, the checkout — the legacy fallback, so an invocation with
-   neither of the above behaves exactly as it did before the split.
+
+With neither, it raises `no workspace: pass --workspace or set
+MOVIEMAKR_WORKSPACE`. There is deliberately no third fallback — the checkout
+used to be one, which meant a forgotten workspace resolved to a valid directory
+and either failed later, confusingly, or quietly wrote a new `assets/` into the
+code tree (`stills`, and the web uploader).
 
 `config.py` reads `workspace.assets_dir` and `workspace.renders_dir` and nothing
 else; `RunLayout.build` already took its three mount bases explicitly, so it did
@@ -54,7 +59,7 @@ the workspace — `--workspace` only decides where assets and renders live.
 (`--scene ID`, or the only scene) and writes them to `assets/` by default —
 because a reference *image* has to live under that mount to survive
 `to_container()`. It is how a turnaround render becomes reusable character
-references; see `scripts/h3/niulai-cat-sheet.yaml`. Timestamps are segment
+references; see `<workspace>/scripts/h3/niulai-cat-sheet.yaml`. Timestamps are segment
 midpoints, never the first or last frame, which are the blurriest.
 
 ### Tests
@@ -181,7 +186,7 @@ scrub a video.
 
 `<workspace>/drafts/*.md` are plain prose, deliberately kept apart from
 `scripts/`: they are pre-script notes (who is in it, the beats, the mood), the
-shape recorded in the header of `scripts/h3/josy-beach-drive.yaml`.
+shape recorded in the header of `<workspace>/scripts/h3/josy-beach-drive.yaml`.
 
 The web app stores and edits them but **cannot expand them** —
 `h3-prompt-writing` is an instruction-only skill with no tools, so an agent has

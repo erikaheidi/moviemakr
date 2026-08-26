@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import py_compile
 import subprocess
 import sys
@@ -38,13 +39,25 @@ def test_python_m_moviemakr_help():
     assert "render" in proc.stdout
 
 
-def test_launcher_runs_and_reports_a_bad_script():
+def test_launcher_runs_and_reports_a_bad_script(tmp_path):
     proc = subprocess.run(
-        [sys.executable, str(REPO_ROOT / "moviemakr.py"), "status", "definitely-not-here.yaml"],
+        [sys.executable, str(REPO_ROOT / "moviemakr.py"), "status",
+         "--workspace", str(tmp_path), "definitely-not-here.yaml"],
         cwd=REPO_ROOT, capture_output=True, text=True,
     )
     assert proc.returncode == 2
     assert "script not found" in proc.stderr
+
+
+def test_launcher_without_a_workspace_says_so():
+    """The checkout is not a fallback workspace, so this must not half-work."""
+    env = {k: v for k, v in os.environ.items() if k != "MOVIEMAKR_WORKSPACE"}
+    proc = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "moviemakr.py"), "status", "anything.yaml"],
+        cwd=REPO_ROOT, capture_output=True, text=True, env=env,
+    )
+    assert proc.returncode == 2
+    assert "no workspace" in proc.stderr
 
 
 def test_no_import_cycles():

@@ -23,8 +23,8 @@ installed anywhere and several workspaces can coexist:
   renders/     output; disposable, reproducible from the scripts
 ```
 
-Point at it with `--workspace PATH` or `$MOVIEMAKR_WORKSPACE`. With neither, the
-checkout itself is used, which is how this used to work.
+Point at it with `--workspace PATH` or `$MOVIEMAKR_WORKSPACE`. One of the two is
+required — this checkout holds code only, and is not a fallback workspace.
 
 ## Usage
 
@@ -238,30 +238,31 @@ command:
 claude "expand drafts/beach-picnic.md into a moviemakr script using h3-prompt-writing"
 ```
 
-## Moving your data into a workspace
+## Setting up a workspace
 
-If you have been running with everything inside the checkout:
+A fresh one is four directories and its own git repo:
 
 ```bash
 WS=~/moviemakr-workspace
 mkdir -p "$WS"/{scripts,assets,drafts,renders}
-mv scripts/* assets/* "$WS"/scripts/ "$WS"/assets/   # adjust per directory
 printf 'renders/\n.cache/\n' > "$WS/.gitignore"
 git -C "$WS" init && git -C "$WS" add -A && git -C "$WS" commit -m 'workspace'
 
 echo 'export MOVIEMAKR_WORKSPACE='"$WS" >> ~/.zshrc
 ```
 
-Then confirm nothing moved that should not have:
+Keep it under version control separately from this checkout: the scripts and the
+reference images are the work, and `renders/` is reproducible from them.
+
+Workspaces are freely relocatable, and you can have several. Moving one does not
+invalidate a single rendered scene: fingerprints are built from container-side
+paths and reference *content*, so the three `-v` mounts change while the
+`/assets/…` and `/out/…` paths the model sees stay identical. Confirm with:
 
 ```bash
 moviemakr render "$WS/scripts/<something>.yaml" --dry-run
+moviemakr status "$WS/scripts/<something>.yaml"   # rendered scenes: up to date
 ```
-
-The three `-v` mounts should now point into the workspace while the
-container-side `/assets/…` and `/out/…` paths stay exactly as before. They will:
-fingerprints are built from container paths and reference *content*, so
-relocating a workspace does not invalidate a single scene.
 
 ## Notes
 
