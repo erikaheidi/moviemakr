@@ -24,6 +24,15 @@ def test_no_scripts_dir_is_empty_not_an_error(workspace):
     assert B.script_rows(workspace) == []
 
 
+def test_script_folders_are_the_subdirectories_in_use(web_workspace):
+    """Offered to the upload form; the top level is not one of them."""
+    assert B.script_folders(web_workspace) == ["h3"]
+
+
+def test_no_scripts_dir_has_no_folders(workspace):
+    assert B.script_folders(workspace) == []
+
+
 def test_a_broken_script_is_a_row_not_an_exception(web_workspace):
     """One unloadable YAML must not take the index down."""
     rows = {r.key: r for r in B.script_rows(web_workspace)}

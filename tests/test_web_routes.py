@@ -280,3 +280,123 @@ def test_upload_location_header_is_encoded(client, monkeypatch):
         follow_redirects=False,
     )
     assert " " not in response.headers["location"]
+
+
+# --- script upload ---------------------------------------------------------
+
+
+@pytest.fixture
+def script_bytes(base_script):
+    import yaml
+    return yaml.safe_dump(base_script, sort_keys=False).encode()
+
+
+def test_index_offers_the_upload_form(client):
+    body = client.get("/").text
+    assert 'action="/scripts"' in body
+    assert 'name="folder"' in body
+    assert 'value="h3"' in body          # the datalist of existing folders
+
+
+def test_script_upload(client, web_workspace, script_bytes):
+    response = client.post(
+        "/scripts",
+        files=[("files", ("Josy Beach Drive.yaml", script_bytes, "text/yaml"))],
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert (web_workspace.scripts_dir / "josy-beach-drive.yaml").is_file()
+
+
+def test_script_upload_into_a_folder(client, web_workspace, script_bytes):
+    client.post(
+        "/scripts",
+        data={"folder": "h3"},
+        files=[("files", ("kitchen.yaml", script_bytes, "text/yaml"))],
+        follow_redirects=False,
+    )
+    assert (web_workspace.scripts_dir / "h3" / "kitchen.yaml").is_file()
+
+
+def test_uploaded_script_appears_on_the_index(client, web_workspace, script_bytes):
+    client.post("/scripts", files=[("files", ("kitchen.yaml", script_bytes, "text/yaml"))],
+                follow_redirects=False)
+    assert client.get("/scripts/kitchen.yaml").status_code == 200
+
+
+def test_script_upload_rejection_is_reported_not_raised(client, web_workspace):
+    response = client.post(
+        "/scripts",
+        files=[("files", ("notes.txt", b"hello", "text/plain"))],
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "error=" in response.headers["location"]
+    assert not (web_workspace.scripts_dir / "notes.txt").exists()
+
+
+def test_script_upload_will_not_clobber_without_replace(client, web_workspace, script_bytes):
+    before = (web_workspace.scripts_dir / "simple.yaml").read_text()
+    response = client.post(
+        "/scripts",
+        files=[("files", ("simple.yaml", script_bytes, "text/yaml"))],
+        follow_redirects=False,
+    )
+    assert "error=" in response.headers["location"]
+    assert (web_workspace.scripts_dir / "simple.yaml").read_text() == before
+
+
+def test_script_upload_replaces_when_asked(client, web_workspace, script_bytes):
+    response = client.post(
+        "/scripts",
+        data={"replace": "true"},
+        files=[("files", ("simple.yaml", script_bytes, "text/yaml"))],
+        follow_redirects=False,
+    )
+    assert "uploaded=" in response.headers["location"]
+    assert "test-movie" in (web_workspace.scripts_dir / "simple.yaml").read_text()
+
+
+def test_a_script_that_will_not_load_is_stored_with_a_warning(client, web_workspace,
+                                                              base_script):
+    """The refs are uploaded separately, so the script often arrives first."""
+    import yaml
+
+    base_script["continuity"] = {"anchors": ["not-here-yet.jpg"]}
+    data = yaml.safe_dump(base_script, sort_keys=False).encode()
+    response = client.post(
+        "/scripts",
+        files=[("files", ("kitchen.yaml", data, "text/yaml"))],
+        follow_redirects=False,
+    )
+    location = response.headers["location"]
+    assert "warning=" in location and "error=" not in location
+    assert (web_workspace.scripts_dir / "kitchen.yaml").is_file()
+
+
+def test_script_upload_cannot_escape_the_scripts_dir(client, web_workspace, script_bytes):
+    response = client.post(
+        "/scripts",
+        data={"folder": "../../pwned"},
+        files=[("files", ("evil.yaml", script_bytes, "text/yaml"))],
+        follow_redirects=False,
+    )
+    assert "error=" in response.headers["location"]
+    assert not (web_workspace.root.parent / "pwned").exists()
+
+
+def test_upload_location_header_is_encoded_for_scripts(client, script_bytes):
+    response = client.post(
+        "/scripts",
+        files=[("files", ("a.yaml", script_bytes, "text/yaml"))],
+        follow_redirects=False,
+    )
+    assert " " not in response.headers["location"]
+
+
+def test_raw_yaml_download_sets_a_filename(client):
+    response = client.get("/scripts/h3/beach.yaml/raw?download=1")
+    assert response.status_code == 200
+    assert "attachment" in response.headers["content-disposition"]
+    assert "beach.yaml" in response.headers["content-disposition"]
+    assert "name: beach drive" in response.text

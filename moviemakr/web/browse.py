@@ -143,6 +143,21 @@ def script_rows(workspace: Workspace) -> list[ScriptRow]:
     return [script_row(workspace, p) for p in script_files(workspace)]
 
 
+def script_folders(workspace: Workspace) -> list[str]:
+    """Subdirectories of scripts/ that already hold scripts, as POSIX keys.
+
+    Offered to the upload form so a script uploaded from another machine keeps
+    landing in the same folder it lives in there, rather than at the top level.
+    """
+    scripts_dir = workspace.scripts_dir
+    folders = {
+        rel_key(scripts_dir, p.parent)
+        for p in script_files(workspace)
+        if p.parent != scripts_dir
+    }
+    return sorted(folders)
+
+
 # --------------------------------------------------------------------------
 # one script's scenes
 # --------------------------------------------------------------------------
@@ -303,6 +318,7 @@ def workspace_summary(workspace: Workspace) -> dict[str, Any]:
     return {
         "root": workspace.root,
         "scripts": rows,
+        "folders": script_folders(workspace),
         "drafts": draft_rows(workspace),
         "script_count": len(rows),
         "invalid_count": sum(1 for r in rows if r.error),

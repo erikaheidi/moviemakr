@@ -146,8 +146,8 @@ one of it. `cli.cmd_status` is now `print_summary(scene_rows(script), …)`.
 
 `moviemakr serve` browses a workspace: scripts and their per-scene state,
 in-browser playback and download of movies and clips, logs, a plain-text draft
-editor, and asset upload. Reached from a phone over Tailscale, it replaces
-sftp'ing into the render box.
+editor, and script/asset upload. Reached from a phone over Tailscale, it
+replaces sftp'ing into the render box.
 
 **It never starts a render and never calls an LLM.** Rendering stays on the CLI
 over ssh, and drafts are expanded by an agent, not the server (see below).
@@ -156,7 +156,8 @@ over ssh, and drafts are expanded by an agent, not the server (see below).
 | --- | --- | --- |
 | `paths.py` | `safe_path`, `safe_stem` — the security boundary | no |
 | `browse.py` | workspace → plain dicts for the templates | no |
-| `assets.py` | upload validation/resize, thumbnail cache (ffmpeg) | no |
+| `assets.py` | image upload validation/resize, thumbnail cache (ffmpeg) | no |
+| `scripts.py` | YAML upload validation and placement under `scripts/` | no |
 | `app.py` | `create_app`, every route | **yes** |
 
 Three things to preserve:
@@ -172,6 +173,19 @@ Three things to preserve:
   to a greedy `.*`, so `/scripts/{key:path}/raw` and friends must be registered
   *before* the `/scripts/{key:path}` catch-all, or `/scripts/a/raw` is read as a
   script named `a/raw`.
+
+Uploads are how a workspace stays in sync with another laptop, now that none of
+the data is in this repo. The two uploaders differ on purpose:
+
+- **An asset is never overwritten** (`unique_path` suffixes it) — a script may
+  already reference the name. **A script is overwritten only with `replace`**,
+  because re-uploading the finalised YAML *is* the update path; keep the
+  workspace under git and that stays recoverable.
+- **`scripts.py` rejects only what is not a script at all** (not UTF-8, not
+  YAML, not a mapping, no `scenes`). A script that parses but fails
+  `load_script` — nearly always a `ref_images` entry not uploaded yet — is
+  stored with a warning, because the script usually arrives before its refs.
+  The index already renders an unloadable script as an error row.
 
 A script that fails to load is rendered as an error row, never raised — one bad
 YAML must not take the index down. Polling the scene table (the one dynamic

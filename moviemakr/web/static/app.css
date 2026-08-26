@@ -100,6 +100,15 @@ code, pre { font-family: var(--mono); font-size: 0.85em; }
   background: color-mix(in srgb, var(--bad) 15%, transparent);
   border-left-color: var(--bad);
 }
+.flash-warn {
+  background: color-mix(in srgb, var(--warn) 15%, transparent);
+  border-left-color: var(--warn);
+}
+
+/* A form that is not the point of the page it lives on. */
+.panel { margin: 0 0 1.5rem; }
+.panel summary { cursor: pointer; color: var(--accent); font-size: 0.9rem; }
+.panel[open] summary { margin-bottom: 0.5rem; }
 
 .section-head { display: flex; align-items: baseline; justify-content: space-between; }
 .section-head h2 { margin-bottom: 0.4rem; }

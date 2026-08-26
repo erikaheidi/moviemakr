@@ -11,6 +11,33 @@
   {{ drafts|length }} draft{{ "" if drafts|length == 1 else "s" }}
 </p>
 
+{% if uploaded %}<p class="flash">Uploaded {{ uploaded }}</p>{% endif %}
+{% if warning %}<p class="flash flash-warn">Stored, but will not load — {{ warning }}</p>{% endif %}
+{% if error %}<p class="flash flash-bad">{{ error }}</p>{% endif %}
+
+<details class="panel" {% if uploaded or warning or error %}open{% endif %}>
+  <summary>upload a script</summary>
+  <p class="hint">
+    Finalised YAML from another machine. Scripts live in the workspace, not in
+    git — this is how one gets here. Reference images still have to be
+    <a href="/assets">uploaded to assets/</a>; a script that names one you have
+    not sent yet is stored anyway, with a warning.
+  </p>
+  <form method="post" action="/scripts" enctype="multipart/form-data" class="upload">
+    <input type="file" name="files" accept=".yaml,.yml,text/yaml" multiple required>
+    <input type="text" name="folder" placeholder="folder (optional, e.g. h3)"
+           list="script-folders" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <datalist id="script-folders">
+      {% for folder in folders %}<option value="{{ folder }}">{% endfor %}
+    </datalist>
+    <label class="check">
+      <input type="checkbox" name="replace" value="true">
+      replace an existing script of the same name
+    </label>
+    <button type="submit">upload</button>
+  </form>
+</details>
+
 {% if not scripts %}
   <p class="empty">No scripts in <code>{{ workspace.scripts_dir }}</code> yet.</p>
 {% endif %}

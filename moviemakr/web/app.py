@@ -5,7 +5,7 @@ Kept thin on purpose: every route resolves a path, calls into `browse` /
 without a web server, and this file is what you read to see the URL map.
 
 Nothing here starts a render. The app is read-only toward rendering and
-read-write only for drafts and asset uploads.
+read-write only for drafts and for script/asset uploads.
 """
 
 from __future__ import annotations
@@ -23,7 +23,8 @@ from ..errors import ConfigError
 from ..layout import Workspace
 from . import assets as A
 from . import browse as B
-from .paths import UnsafePath, safe_path, safe_stem
+from . import scripts as S
+from .paths import UnsafePath, rel_key, safe_path, safe_stem
 
 HERE = Path(__file__).resolve().parent
 
@@ -78,11 +79,19 @@ def create_app(workspace: Workspace) -> FastAPI:
             filename=path.name if download else None,
         )
 
+    def back_to(url: str, **params: str) -> RedirectResponse:
+        """Redirect carrying flash text. Filenames and error text go into a
+        Location header, so they have to be percent-encoded - a raw space
+        there is an invalid header."""
+        query = urlencode({k: v for k, v in params.items() if v})
+        return RedirectResponse(f"{url}?{query}" if query else url, status_code=303)
+
     # ----------------------------------------------------------------- index
 
     @app.get("/", response_class=HTMLResponse)
-    def index(request: Request):
-        return page(request, "index.html", **B.workspace_summary(workspace))
+    def index(request: Request, uploaded: str = "", error: str = "", warning: str = ""):
+        return page(request, "index.html", uploaded=uploaded, error=error,
+                    warning=warning, **B.workspace_summary(workspace))
 
     # --------------------------------------------------------------- scripts
     #
@@ -90,9 +99,42 @@ def create_app(workspace: Workspace) -> FastAPI:
     # the longer patterns must be registered first or `/scripts/a/raw` is read
     # as the script named "a/raw".
 
+    @app.post("/scripts")
+    async def script_upload(files: list[UploadFile], folder: str = Form(""),
+                            replace: bool = Form(False)):
+        """Take a finalised script from another machine into the workspace.
+
+        A stored script that will not load is a warning, not a rejection: refs
+        are uploaded separately, so the script often arrives first.
+        """
+        done, warnings, errors = [], [], []
+        for upload in files:
+            try:
+                dest, note = S.store_upload(
+                    workspace.scripts_dir, upload.filename or "script.yaml",
+                    await upload.read(), folder=folder, replace=replace,
+                )
+            except S.ScriptRejected as exc:
+                errors.append(str(exc))
+                continue
+            key = rel_key(workspace.scripts_dir, dest)
+            done.append(f"{key} ({note})")
+            problem = S.load_error(dest, workspace)
+            if problem:
+                warnings.append(f"{key}: {problem}")
+        return back_to(
+            "/",
+            uploaded=", ".join(done),
+            warning="; ".join(warnings),
+            error="; ".join(errors),
+        )
+
     @app.get("/scripts/{key:path}/raw", response_class=PlainTextResponse)
-    def script_raw(key: str):
-        return PlainTextResponse(script_path(key).read_text(errors="replace"))
+    def script_raw(key: str, download: bool = False):
+        path = script_path(key)
+        if download:
+            return send(path, download=True, media_type="text/plain")
+        return PlainTextResponse(path.read_text(errors="replace"))
 
     @app.get("/scripts/{key:path}/scenes", response_class=HTMLResponse)
     def script_scenes(request: Request, key: str):
@@ -195,15 +237,7 @@ def create_app(workspace: Workspace) -> FastAPI:
                 done.append(f"{dest.name} ({note})")
             except A.UploadRejected as exc:
                 errors.append(str(exc))
-        # Filenames and error text go into a Location header, so they have to
-        # be percent-encoded - a raw space there is an invalid header.
-        params = {}
-        if done:
-            params["uploaded"] = ", ".join(done)
-        if errors:
-            params["error"] = "; ".join(errors)
-        query = ("?" + urlencode(params)) if params else ""
-        return RedirectResponse(f"/assets{query}", status_code=303)
+        return back_to("/assets", uploaded=", ".join(done), error="; ".join(errors))
 
     @app.get("/assets/file/{name}")
     def asset_file(name: str, download: bool = False):
