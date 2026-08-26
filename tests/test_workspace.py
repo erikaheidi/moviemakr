@@ -28,25 +28,21 @@ def a_dir(tmp_path: Path):
 
 
 def test_explicit_wins_over_env(a_dir, monkeypatch):
-    explicit, env, default = a_dir("explicit"), a_dir("env"), a_dir("default")
+    explicit, env = a_dir("explicit"), a_dir("env")
     monkeypatch.setenv(WORKSPACE_ENV, str(env))
-    assert Workspace.resolve(explicit, default=default).root == explicit
+    assert Workspace.resolve(explicit).root == explicit
 
 
-def test_env_wins_over_default(a_dir, monkeypatch):
-    env, default = a_dir("env"), a_dir("default")
+def test_env_is_used_without_an_explicit_argument(a_dir, monkeypatch):
+    env = a_dir("env")
     monkeypatch.setenv(WORKSPACE_ENV, str(env))
-    assert Workspace.resolve(None, default=default).root == env
-
-
-def test_default_is_the_last_resort(a_dir):
-    default = a_dir("default")
-    assert Workspace.resolve(None, default=default).root == default
+    assert Workspace.resolve(None).root == env
 
 
 def test_no_workspace_at_all_is_an_error():
+    """There is no third fallback - the checkout is not a workspace."""
     with pytest.raises(ConfigError, match=WORKSPACE_ENV):
-        Workspace.resolve(None, default=None)
+        Workspace.resolve(None)
 
 
 def test_missing_directory_is_an_error(tmp_path):
@@ -54,11 +50,11 @@ def test_missing_directory_is_an_error(tmp_path):
         Workspace.resolve(tmp_path / "nope")
 
 
-def test_empty_env_var_falls_through(a_dir, monkeypatch):
+def test_empty_env_var_counts_as_unset(monkeypatch):
     """An exported-but-empty var means "unset", not "the current directory"."""
-    default = a_dir("default")
     monkeypatch.setenv(WORKSPACE_ENV, "")
-    assert Workspace.resolve(None, default=default).root == default
+    with pytest.raises(ConfigError, match=WORKSPACE_ENV):
+        Workspace.resolve(None)
 
 
 # --- derived paths ---------------------------------------------------------

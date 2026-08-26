@@ -19,12 +19,6 @@ from .render import RenderOptions, render
 from .report import print_summary
 from .status import scene_rows
 
-# Where the data used to live, back when it sat inside the checkout. Kept only
-# as the last fallback for `Workspace.resolve`, so an invocation with neither
-# --workspace nor $MOVIEMAKR_WORKSPACE behaves exactly as it did before.
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="moviemakr",
@@ -38,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument(
         "--workspace", type=Path, default=None,
         help=f"data root holding scripts/, assets/, drafts/ and renders/ "
-             f"(default: ${WORKSPACE_ENV}, else the moviemakr checkout)",
+             f"(default: ${WORKSPACE_ENV}; required if that is unset)",
     )
 
     p_render = sub.add_parser("render", parents=[common],
@@ -184,16 +178,15 @@ def cmd_serve(args: argparse.Namespace, workspace: Workspace) -> int:
     return run_server(workspace, host=args.host, port=args.port, reload=args.reload)
 
 
-def main(argv: Sequence[str] | None = None, project_root: Path | None = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    project_root = project_root or PROJECT_ROOT
 
     code = check_tools(args.command, getattr(args, "dry_run", False))
     if code is not None:
         return code
 
     try:
-        workspace = Workspace.resolve(args.workspace, default=project_root)
+        workspace = Workspace.resolve(args.workspace)
 
         if args.command == "serve":
             return cmd_serve(args, workspace)
