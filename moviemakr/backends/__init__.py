@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from ..errors import ConfigError, suggest
 
-BACKENDS = ("sdcpp",)
+BACKENDS = ("sdcpp", "comfy")
 DEFAULT_BACKEND = "sdcpp"
 
 
@@ -43,4 +43,8 @@ def resolve(name: str):
         from . import sdcpp
 
         return sdcpp
+    if name == "comfy":
+        from . import comfy
+
+        return comfy
     raise AssertionError(f"backend {name!r} is registered but not wired up")

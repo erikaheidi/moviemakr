@@ -105,17 +105,19 @@ class RunLayout:
     """Paths for one script's run. All three mount bases are pre-resolved."""
 
     run_dir: Path
-    model_root: Path
+    # None when the backend has no per-scene container to mount models into -
+    # ComfyUI is a long-running server that already owns its own models.
+    model_root: Path | None
     assets_dir: Path
     name_slug: str
     container: str
 
     @classmethod
-    def build(cls, *, run_dir: Path, model_root: Path, assets_dir: Path,
+    def build(cls, *, run_dir: Path, model_root: Path | None, assets_dir: Path,
               name_slug: str, container: str) -> "RunLayout":
         return cls(
             run_dir=run_dir.resolve(),
-            model_root=model_root.resolve(),
+            model_root=model_root.resolve() if model_root is not None else None,
             assets_dir=assets_dir.resolve(),
             name_slug=name_slug,
             container=container,
@@ -198,6 +200,8 @@ class RunLayout:
             (self.assets_dir, CONTAINER_ASSETS),
             (self.run_dir, CONTAINER_OUT),
         ):
+            if base is None:
+                continue
             try:
                 rel = host.relative_to(base)
             except ValueError:

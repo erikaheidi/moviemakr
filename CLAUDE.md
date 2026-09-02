@@ -116,10 +116,12 @@ and the four leaves at the top depend on nothing but stdlib and `errors`:
 | `layout.py` | `slugify`, `Workspace`, `RunLayout` (incl. `to_container`) | errors |
 | `media.py` | codec table, ffprobe/ffmpeg runners + pure command builders | errors |
 | `config.py` | `SceneSettings`, `Scene`, `Script`, `load_script` | errors, layout, media |
+| `backends/__init__.py` | the `backend:` registry, `check_name`, `resolve` | errors |
 | `backends/sdcpp.py` | `sd_args`, `fingerprint`, `docker_argv`, `check_gpu`, `run_scene` | errors, layout, config |
+| `backends/comfy.py` | `build_graph`, `fingerprint`, frame-grid helpers | config |
 | `assemble.py` | normalize → concat → optional music mix | layout, config, media |
 | `render.py` | `RenderOptions`, the render loop and its helpers | most of the above |
-| `status.py` | `scene_rows` — per-scene state incl. **stale** | config, docker, render, state, media |
+| `status.py` | `scene_rows` — per-scene state incl. **stale** | config, backends, render, state, media |
 | `cli.py` | argparse, `cmd_status` / `cmd_assemble` / `cmd_serve` | everything |
 | `web/` | the HTTP view (optional extra) | see below |
 
@@ -130,6 +132,13 @@ Three placements are deliberate and worth not undoing:
   it in `config` is the one real import cycle available here.
 - **`to_container` is a `RunLayout` method**, not a docker concern. Its three
   mount bases *are* the layout's state.
+- **Each backend owns its own fingerprint.** `comfy.fingerprint` hashes the API
+  graph, `sdcpp.fingerprint` hashes the argv. They must not be unified: the same
+  scene rendered through two engines is not the same output, so a run that
+  switched backends has to re-render rather than resume. Both exclude the
+  *location* of the output (container paths, `filename_prefix`) so that moving
+  the workspace invalidates nothing.
+
 - **`fingerprint` sits directly below `sd_args` in `backends/sdcpp.py`.** Their contract
   is "the hash is exactly this argv plus reference content", so they have to be
   edited together.

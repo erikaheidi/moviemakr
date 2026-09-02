@@ -329,6 +329,7 @@ The pipeline is one module per stage, in dependency order:
 | `media.py` | ffprobe/ffmpeg runners plus pure command builders |
 | `config.py` | `SceneSettings`, `Scene`, `Script`, `load_script` |
 | `backends/sdcpp.py` | `sd_args`, `fingerprint`, `docker_argv`, GPU preflight |
+| `backends/comfy.py` | `build_graph`, `fingerprint` — the ComfyUI API graph |
 | `assemble.py` | normalize → concat → optional music mix |
 | `render.py` | `RenderOptions` and the render loop |
 | `status.py` | `scene_rows` — per-scene state, shared by `status` and the web view |

@@ -156,6 +156,51 @@ def base_script(model_root: Path) -> dict:
     }
 
 
+# ComfyUI-side model *names*, not paths: the server resolves them in its own
+# models directory. Fixed, because they appear in the golden graph and its hash.
+COMFY_MODELS = {
+    "diffusion_model": "minimax_h3_fl2va_pruned_bf16.safetensors",
+    "text_encoder": "qwen3vl_32b_minimax_h3_bf16.safetensors",
+    "video_vae": "minimax_h3_video_vae_fp16.safetensors",
+    "audio_vae": "minimax_h3_audio_vae_fp32.safetensors",
+}
+
+
+@pytest.fixture
+def comfy_script(base_script: dict) -> dict:
+    """A minimal comfy-backend script: no model/docker block, no refs."""
+    script = copy.deepcopy(base_script)
+    script.pop("model")
+    script.pop("docker")
+    script["backend"] = "comfy"
+    script["comfy"] = dict(COMFY_MODELS)
+    return script
+
+
+@pytest.fixture
+def write_comfy(project_root: Path, comfy_script: dict):
+    """Write a comfy-backend script and return its path."""
+
+    def _write(overrides: dict | None = None, filename: str = "comfy.yaml") -> Path:
+        data = deep_merge(comfy_script, overrides or {})
+        path = project_root / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(yaml.safe_dump(data, sort_keys=False))
+        return path
+
+    return _write
+
+
+@pytest.fixture
+def load_comfy(write_comfy, workspace):
+    from moviemakr.config import load_script
+
+    def _load(overrides: dict | None = None):
+        return load_script(write_comfy(overrides), workspace)
+
+    return _load
+
+
 @pytest.fixture
 def write_script(project_root: Path, base_script: dict):
     """Write a YAML script into the project and return its path.

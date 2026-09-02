@@ -22,11 +22,18 @@ from .layout import RunLayout, Workspace, slugify
 from .media import CONTAINERS
 
 TOP_KEYS = frozenset(
-    {"name", "backend", "model", "docker", "defaults", "continuity", "output", "scenes"}
+    {"name", "backend", "model", "docker", "comfy", "defaults", "continuity", "output", "scenes"}
 )
 MODEL_KEYS = frozenset({"root", "diffusion_model", "llm", "vae", "audio_vae"})
 MODEL_REQUIRED = ("diffusion_model", "llm", "vae")
 DOCKER_KEYS = frozenset({"image", "devices", "run_as_current_user"})
+COMFY_KEYS = frozenset({
+    "url", "input_dir", "output_dir",
+    "diffusion_model", "text_encoder", "video_vae", "audio_vae",
+    "lora", "lora_strength", "steps", "sampler", "scheduler",
+    "shift_video", "shift_audio",
+})
+COMFY_REQUIRED = ("diffusion_model", "text_encoder", "video_vae", "audio_vae")
 CONTINUITY_KEYS = frozenset({"anchors", "anchor_videos", "chain_from_previous"})
 OUTPUT_KEYS = frozenset({"container", "audio", "music", "music_gain_db"})
 # Scene keys that are not settings; everything else must be a SceneSettings field.
@@ -34,6 +41,17 @@ SCENE_KEYS = frozenset({"id", "prompt", "ref_images", "ref_videos", "chain_from_
 
 DEFAULT_IMAGE = "ghcr.io/leejet/stable-diffusion.cpp:master-vulkan"
 DEFAULT_DEVICES = ["/dev/dri/card1", "/dev/dri/renderD128", "/dev/kfd"]
+
+DEFAULT_COMFY_URL = "http://127.0.0.1:8188"
+# MiniMax H3 has no negative conditioning at CFG 1, so ComfyUI drives it through
+# BasicGuider with a fixed sampler pair rather than KSampler.
+DEFAULT_COMFY_SAMPLER = "res_multistep"
+DEFAULT_COMFY_SCHEDULER = "simple"
+DEFAULT_COMFY_STEPS = 8
+# The model's own shifted schedules; the video and audio streams are denoised
+# together but on different sigma curves.
+DEFAULT_SHIFT_VIDEO = 12.0
+DEFAULT_SHIFT_AUDIO = 3.0
 
 
 # --------------------------------------------------------------------------
@@ -168,6 +186,36 @@ class DockerConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ComfyConfig:
+    """Where ComfyUI is, and which of its models to drive.
+
+    The model fields are ComfyUI-side *names*, not host paths: they are whatever
+    its loader dropdowns list, resolved by the server inside its own models
+    directory. They cannot be existence-checked at load time the way sd.cpp's
+    files are, so the backend's preflight asks the running server instead.
+
+    `input_dir` and `output_dir` are the host sides of ComfyUI's own input/output
+    directories. Reference images and chained frames are copied into the first;
+    finished clips are collected from the second.
+    """
+
+    url: str
+    input_dir: Path | None
+    output_dir: Path | None
+    diffusion_model: str
+    text_encoder: str
+    video_vae: str
+    audio_vae: str
+    lora: str | None
+    lora_strength: float
+    steps: int
+    sampler: str
+    scheduler: str
+    shift_video: float
+    shift_audio: float
+
+
+@dataclass(frozen=True, slots=True)
 class OutputConfig:
     container: str
     audio: str
@@ -189,8 +237,9 @@ class Script:
     output: OutputConfig
     scenes: tuple[Scene, ...]
     layout: RunLayout
-    # Last, with a default, so constructing a Script positionally keeps working.
+    # Last, with defaults, so constructing a Script positionally keeps working.
     backend: str = DEFAULT_BACKEND
+    comfy: ComfyConfig | None = None
 
     @property
     def run_dir(self) -> Path:
@@ -229,6 +278,20 @@ def _as_dict(raw: Any, key: str) -> dict:
     return value
 
 
+def _opt_dir(value: Any, what: str) -> Path | None:
+    """An optional directory that must exist when given.
+
+    Checked at load time rather than at submit time: a typo here otherwise
+    surfaces as a ComfyUI validation error after the models have loaded.
+    """
+    if value is None:
+        return None
+    path = Path(str(value)).expanduser()
+    if not path.is_dir():
+        raise ConfigError(f"{what} is not a directory: {path}")
+    return path.resolve()
+
+
 def _resolve_file(rel: str, what: str, assets_dir: Path) -> Path:
     """Resolve a script-relative or absolute path, requiring it to exist."""
     path = Path(str(rel)).expanduser()
@@ -243,8 +306,14 @@ def _resolve_ref_image(rel: str, what: str, layout: RunLayout) -> Path:
 
     Reference *videos* are exempt: they are transcoded into frame directories
     under the run dir, so their sources can live anywhere.
+
+    This constraint belongs to the container backends. ComfyUI reads its inputs
+    from its own input directory, which the comfy backend copies into, so any
+    readable host path is fine there and `layout.model_root` is None anyway.
     """
     host = _resolve_file(rel, what, layout.assets_dir)
+    if layout.model_root is None:
+        return host
     try:
         layout.to_container(host)
     except ConfigError:
@@ -274,26 +343,36 @@ def load_script(script_path: Path, workspace: Workspace) -> Script:
     name = raw.get("name") or script_path.stem
     backend = check_name(str(raw.get("backend") or DEFAULT_BACKEND))
 
-    # --- model ---
-    model = _as_dict(raw, "model")
-    check_keys("model", model, MODEL_KEYS)
-    model_root = Path(str(model.get("root", ""))).expanduser()
-    if not model_root.is_dir():
-        raise ConfigError(f"model.root is not a directory: {model_root}")
-
+    # --- model / docker: the sd.cpp engine's own container and weights ---
+    # ComfyUI is a long-running server that already owns its models, so a comfy
+    # script must not be made to describe a container it will never start.
     model_files: dict[str, Path] = {}
-    for key in (*MODEL_REQUIRED, "audio_vae"):
-        rel = model.get(key)
-        if rel is None:
-            if key in MODEL_REQUIRED:
-                raise ConfigError(f"model.{key} is required")
-            continue
-        host = (model_root / str(rel)).resolve()
-        if not host.is_file():
-            raise ConfigError(f"model.{key} not found: {host}")
-        model_files[key] = host
+    model_root: Path | None = None
+    if backend == "sdcpp":
+        model = _as_dict(raw, "model")
+        check_keys("model", model, MODEL_KEYS)
+        model_root = Path(str(model.get("root", ""))).expanduser()
+        if not model_root.is_dir():
+            raise ConfigError(f"model.root is not a directory: {model_root}")
 
-    # --- docker ---
+        for key in (*MODEL_REQUIRED, "audio_vae"):
+            rel = model.get(key)
+            if rel is None:
+                if key in MODEL_REQUIRED:
+                    raise ConfigError(f"model.{key} is required")
+                continue
+            host = (model_root / str(rel)).resolve()
+            if not host.is_file():
+                raise ConfigError(f"model.{key} not found: {host}")
+            model_files[key] = host
+    else:
+        for key in ("model", "docker"):
+            if raw.get(key):
+                raise ConfigError(
+                    f"{key}: not used by the {backend} backend - "
+                    f"put the model names under 'comfy:' instead"
+                )
+
     docker_raw = _as_dict(raw, "docker")
     check_keys("docker", docker_raw, DOCKER_KEYS)
     docker = DockerConfig(
@@ -301,6 +380,31 @@ def load_script(script_path: Path, workspace: Workspace) -> Script:
         devices=tuple(str(d) for d in (docker_raw.get("devices") or DEFAULT_DEVICES)),
         run_as_current_user=bool(docker_raw.get("run_as_current_user", True)),
     )
+
+    # --- comfy ---
+    comfy: ComfyConfig | None = None
+    if backend == "comfy":
+        comfy_raw = _as_dict(raw, "comfy")
+        check_keys("comfy", comfy_raw, COMFY_KEYS)
+        for key in COMFY_REQUIRED:
+            if not comfy_raw.get(key):
+                raise ConfigError(f"comfy.{key} is required")
+        comfy = ComfyConfig(
+            url=str(comfy_raw.get("url") or DEFAULT_COMFY_URL).rstrip("/"),
+            input_dir=_opt_dir(comfy_raw.get("input_dir"), "comfy.input_dir"),
+            output_dir=_opt_dir(comfy_raw.get("output_dir"), "comfy.output_dir"),
+            diffusion_model=str(comfy_raw["diffusion_model"]),
+            text_encoder=str(comfy_raw["text_encoder"]),
+            video_vae=str(comfy_raw["video_vae"]),
+            audio_vae=str(comfy_raw["audio_vae"]),
+            lora=_opt_str("lora", comfy_raw.get("lora"), "comfy"),
+            lora_strength=_float("lora_strength", comfy_raw.get("lora_strength", 1.0), "comfy"),
+            steps=_positive_int("steps", comfy_raw.get("steps", DEFAULT_COMFY_STEPS), "comfy"),
+            sampler=str(comfy_raw.get("sampler") or DEFAULT_COMFY_SAMPLER),
+            scheduler=str(comfy_raw.get("scheduler") or DEFAULT_COMFY_SCHEDULER),
+            shift_video=_float("shift_video", comfy_raw.get("shift_video", DEFAULT_SHIFT_VIDEO), "comfy"),
+            shift_audio=_float("shift_audio", comfy_raw.get("shift_audio", DEFAULT_SHIFT_AUDIO), "comfy"),
+        )
 
     # --- output ---
     output_raw = _as_dict(raw, "output")
@@ -376,6 +480,17 @@ def load_script(script_path: Path, workspace: Workspace) -> Script:
         for rel in rs.get("ref_videos") or []:
             ref_videos.append(_resolve_file(rel, f"{where} ref_video", assets_dir))
 
+        # Reference conditioning is a different ComfyUI node (ReferenceToVideo,
+        # with autogrow ref_image_N inputs) driven by a different checkpoint.
+        # Silently dropping the refs would render a whole script without the
+        # anchors that hold a character together, so refuse instead.
+        if backend == "comfy" and (refs or ref_videos):
+            raise ConfigError(
+                f"{where}: the comfy backend does not support ref_images or "
+                f"ref_videos yet - it renders through MiniMaxH3ImageToVideo.\n"
+                f"  Remove them (and continuity.anchors) or use backend: sdcpp."
+            )
+
         scenes.append(
             Scene(
                 index=i,
@@ -399,4 +514,5 @@ def load_script(script_path: Path, workspace: Workspace) -> Script:
         scenes=tuple(scenes),
         layout=layout,
         backend=backend,
+        comfy=comfy,
     )
