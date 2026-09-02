@@ -28,6 +28,9 @@ CONTAINER_OUT = "/out"
 WORKSPACE_ENV = "MOVIEMAKR_WORKSPACE"
 
 # sd-cli always writes WebM, whatever container the finished movie uses.
+# ComfyUI's SaveVideo writes MP4, so the suffix is per-backend: naming an MP4
+# `.webm` still plays (ffmpeg sniffs content) but makes the web view serve it as
+# video/webm, and lies to anyone reading the directory.
 CLIP_SUFFIX = "webm"
 
 RUN_SUBDIRS = ("scenes", "frames", "normalized", "logs")
@@ -111,16 +114,19 @@ class RunLayout:
     assets_dir: Path
     name_slug: str
     container: str
+    clip_suffix: str = CLIP_SUFFIX
 
     @classmethod
     def build(cls, *, run_dir: Path, model_root: Path | None, assets_dir: Path,
-              name_slug: str, container: str) -> "RunLayout":
+              name_slug: str, container: str,
+              clip_suffix: str = CLIP_SUFFIX) -> "RunLayout":
         return cls(
             run_dir=run_dir.resolve(),
             model_root=model_root.resolve() if model_root is not None else None,
             assets_dir=assets_dir.resolve(),
             name_slug=name_slug,
             container=container,
+            clip_suffix=clip_suffix,
         )
 
     # --- directories ------------------------------------------------------
@@ -148,8 +154,8 @@ class RunLayout:
     # --- per-scene files --------------------------------------------------
 
     def clip(self, slug: str) -> Path:
-        """Raw model output. Always .webm - only the movie follows `container`."""
-        return self.scenes_dir / f"{slug}.{CLIP_SUFFIX}"
+        """Raw engine output, in whatever the engine writes - not `container`."""
+        return self.scenes_dir / f"{slug}.{self.clip_suffix}"
 
     def frame(self, slug: str) -> Path:
         """Last frame of the scene, fed to the next one when chaining."""

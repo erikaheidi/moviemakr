@@ -297,3 +297,10 @@ def test_comfy_rejects_ref_images_rather_than_dropping_them(write_comfy, workspa
 def test_comfy_has_no_model_root(load_comfy):
     """There is no per-scene container, so there is no /models mount."""
     assert load_comfy().layout.model_root is None
+
+
+def test_clips_are_named_for_what_the_engine_writes(load_comfy, load):
+    """SaveVideo writes MP4. Naming it .webm plays, but serves the wrong MIME
+    type from the web view and lies to anyone reading the directory."""
+    assert load_comfy().layout.clip("001-a").suffix == ".mp4"
+    assert load().layout.clip("001-a").suffix == ".webm"

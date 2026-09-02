@@ -436,6 +436,8 @@ def load_script(script_path: Path, workspace: Workspace) -> Script:
         assets_dir=assets_dir,
         name_slug=slugify(name),
         container=container,
+        # sd-cli writes WebM; ComfyUI's SaveVideo writes MP4.
+        clip_suffix="mp4" if backend == "comfy" else "webm",
     )
 
     music_raw = output_raw.get("music")
