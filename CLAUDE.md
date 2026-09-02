@@ -255,13 +255,31 @@ previous frame), which is why a chained scene always prints "render" under
 script has changed since it rendered — telling you what a render would actually
 redo.
 
-### Two continuity mechanisms (both use the model's `--ref-image`)
+### Continuity mechanisms
+
+sdcpp has two, both riding the model's `--ref-image`:
 
 - `continuity.anchors` — images passed to *every* scene (e.g. a character sheet).
 - `chain_from_previous` — each scene's final frame is extracted to `frames/` and
   fed to the next scene as a reference. Scenes outside a filtered selection still
   contribute their last frame, so `--only`/`--scene` runs don't break downstream
   continuity.
+
+comfy adds a third that sd-cli cannot express, `overlap_frames` (default 22):
+
+- The **tail of the previous clip** — video *and* its soundtrack — is anchored at
+  frame 0 of the next scene through `MiniMaxH3AddGuide`, then trimmed back off at
+  assembly. A single handed-off frame restarts both motion and the soundscape at
+  every seam; a segment carries them across.
+- **Two halves that must agree exactly.** The node snaps a guide clip *down* to
+  the 17k+5 grid without saying so, so `effective_overlap` snaps once and the
+  count actually anchored is written to `state.json`. Assembly trims from
+  `state.json`, never from the script's current `overlap_frames` — editing the
+  value must not change how yesterday's clip is cut.
+- Both cuts seek *before* `-i` so video and audio move together. A filter-side
+  trim would shift the picture and leave the sound where it was.
+- It costs compute: at length 124 an overlap of 22 keeps 102 new frames, so about
+  18% of each scene is regenerated and thrown away.
 
 ### GPU / container gotchas (don't "simplify" these away)
 

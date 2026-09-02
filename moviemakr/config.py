@@ -79,6 +79,13 @@ def _opt_positive_int(key: str, value: Any, where: str) -> int | None:
     return None if value is None else _positive_int(key, value, where)
 
 
+def _non_negative_int(key: str, value: Any, where: str) -> int:
+    number = _int(key, value, where)
+    if number < 0:
+        raise ConfigError(f"{where}: {key} must be 0 or more, got {number}")
+    return number
+
+
 def _float(key: str, value: Any, where: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
         raise ConfigError(f"{where}: {key} must be a number, got {value!r}")
@@ -120,6 +127,7 @@ _COERCERS = {
     "negative_prompt": _str,
     "style_suffix": _str,
     "extra_args": _str_tuple,
+    "overlap_frames": _non_negative_int,
 }
 
 
@@ -144,6 +152,10 @@ class SceneSettings:
     style_suffix: str = ""
     # A tuple, not a list: a frozen dataclass must not hand out a shared mutable.
     extra_args: tuple[str, ...] = ()
+    # comfy backend only. Frames of the previous scene - video *and* its audio -
+    # anchored at the head of this one, then trimmed back off at assembly. 0 is a
+    # hard cut. sd-cli has no equivalent, so the sdcpp backend ignores it.
+    overlap_frames: int = 22
 
     FIELDS: ClassVar[frozenset[str]] = frozenset(_COERCERS)
 

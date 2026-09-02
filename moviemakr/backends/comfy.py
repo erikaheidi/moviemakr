@@ -70,11 +70,17 @@ def output_prefix(script: Script, scene) -> str:
     return f"{OUTPUT_PREFIX}/{script.layout.name_slug}/{scene.slug}"
 
 
-def build_graph(scene, script: Script, *, first_frame: str | None = None) -> dict[str, dict]:
+def build_graph(scene, script: Script, *, first_frame: str | None = None,
+                overlap_clip: str | None = None) -> dict[str, dict]:
     """The API-format prompt for one scene.
 
-    `first_frame` is a path relative to ComfyUI's input directory, already
-    placed there by the caller - the graph only ever names it.
+    `first_frame` and `overlap_clip` are paths relative to ComfyUI's input
+    directory, already placed there by the caller - the graph only names them.
+
+    They are alternative ways to chain. `overlap_clip` anchors a whole tail
+    segment of the previous scene, its soundtrack included, so motion and the
+    soundscape continue across the seam; `first_frame` anchors a single still,
+    which restarts both. When both are given the overlap wins.
     """
     comfy = script.comfy
     if comfy is None:
@@ -133,10 +139,31 @@ def build_graph(scene, script: Script, *, first_frame: str | None = None) -> dic
         "height": settings.height,
         "length": length,
     }
-    if first_frame is not None:
+    if first_frame is not None and overlap_clip is None:
         graph["first"] = {"class_type": "LoadImage", "inputs": {"image": first_frame}}
         cond_inputs["first_frame"] = ["first", 0]
     graph["cond"] = {"class_type": "MiniMaxH3ImageToVideo", "inputs": cond_inputs}
+
+    conditioning = ["cond", 0]
+    if overlap_clip is not None:
+        # One file carries both streams, so the frames and their soundtrack stay
+        # aligned without re-syncing a frame dump against a separate wav.
+        graph["tail"] = {"class_type": "LoadVideo", "inputs": {"file": overlap_clip}}
+        graph["comp"] = {"class_type": "GetVideoComponents", "inputs": {"video": ["tail", 0]}}
+        graph["guide"] = {
+            "class_type": "MiniMaxH3AddGuide",
+            "inputs": {
+                "positive": ["cond", 0],
+                "latent": ["cond", 1],
+                # Anchored at the head; the assembly trim removes it again.
+                "frame_idx": 0,
+                "vae": ["vae", 0],
+                "audio_vae": ["avae", 0],
+                "image": ["comp", 0],
+                "audio": ["comp", 1],
+            },
+        }
+        conditioning = ["guide", 0]
 
     graph.update({
         "noise": {"class_type": "RandomNoise", "inputs": {"noise_seed": settings.seed}},
@@ -153,7 +180,7 @@ def build_graph(scene, script: Script, *, first_frame: str | None = None) -> dic
         # H3 has no negative conditioning at CFG 1, so it is guided, not CFG-sampled.
         "guider": {
             "class_type": "BasicGuider",
-            "inputs": {"model": ["shift", 0], "conditioning": ["cond", 0]},
+            "inputs": {"model": ["shift", 0], "conditioning": conditioning},
         },
         "sample": {
             "class_type": "SamplerCustomAdvanced",
@@ -241,9 +268,26 @@ def digest(graph_text: str, ref_tokens: Sequence[str]) -> str:
 
 
 def fingerprint(scene, script: Script, inputs: Sequence[Path] = (), *,
-                first_frame: str | None = None) -> str:
-    """Hash of the graph plus the content of every host file it reads."""
+                first_frame: str | None = None, overlap_clip: str | None = None) -> str:
+    """Hash of the graph plus the content of every host file it reads.
+
+    `inputs` are the host-side paths of those files. Their *content* is hashed,
+    not their names, so re-rendering scene N invalidates scene N+1 whose anchor
+    changed underneath an unchanged filename.
+    """
     return digest(
-        canonical(build_graph(scene, script, first_frame=first_frame)),
+        canonical(build_graph(scene, script, first_frame=first_frame,
+                              overlap_clip=overlap_clip)),
         [ref_token(p) for p in inputs],
     )
+
+
+def effective_overlap(scene, *, has_previous: bool) -> int:
+    """Frames this scene will actually be anchored on, snapped to the grid.
+
+    Snapped here, once, because the assembly trim must remove exactly what the
+    node anchored - and the node snaps *down* without saying so.
+    """
+    if not has_previous or not scene.chain_from_previous:
+        return 0
+    return align_down(scene.settings.overlap_frames)
