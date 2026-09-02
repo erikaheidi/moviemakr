@@ -1,4 +1,4 @@
-"""Building and running the per-scene container.
+"""The stable-diffusion.cpp backend: building and running the per-scene container.
 
 `fingerprint` lives here, directly below `sd_args`, because their contract is
 "the hash is exactly this argv plus reference content". They have to be edited
@@ -16,8 +16,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from .config import Script
-from .layout import CONTAINER_ASSETS, CONTAINER_MODELS, CONTAINER_OUT, slugify
+from ..config import Script
+from ..layout import CONTAINER_ASSETS, CONTAINER_MODELS, CONTAINER_OUT, slugify
 
 GPU_CHECK_TIMEOUT = 300
 

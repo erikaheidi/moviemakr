@@ -116,7 +116,7 @@ and the four leaves at the top depend on nothing but stdlib and `errors`:
 | `layout.py` | `slugify`, `Workspace`, `RunLayout` (incl. `to_container`) | errors |
 | `media.py` | codec table, ffprobe/ffmpeg runners + pure command builders | errors |
 | `config.py` | `SceneSettings`, `Scene`, `Script`, `load_script` | errors, layout, media |
-| `docker.py` | `sd_args`, `fingerprint`, `docker_argv`, `check_gpu`, `run_scene` | errors, layout, config |
+| `backends/sdcpp.py` | `sd_args`, `fingerprint`, `docker_argv`, `check_gpu`, `run_scene` | errors, layout, config |
 | `assemble.py` | normalize → concat → optional music mix | layout, config, media |
 | `render.py` | `RenderOptions`, the render loop and its helpers | most of the above |
 | `status.py` | `scene_rows` — per-scene state incl. **stale** | config, docker, render, state, media |
@@ -130,7 +130,7 @@ Three placements are deliberate and worth not undoing:
   it in `config` is the one real import cycle available here.
 - **`to_container` is a `RunLayout` method**, not a docker concern. Its three
   mount bases *are* the layout's state.
-- **`fingerprint` sits directly below `sd_args` in `docker.py`.** Their contract
+- **`fingerprint` sits directly below `sd_args` in `backends/sdcpp.py`.** Their contract
   is "the hash is exactly this argv plus reference content", so they have to be
   edited together.
 

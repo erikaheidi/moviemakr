@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .assemble import assemble
 from .config import Script, load_script
-from .docker import format_argv
+from .backends.sdcpp import format_argv
 from .errors import ConfigError
 from .layout import WORKSPACE_ENV, Workspace
 from .media import extract_still, probe_clip, still_timestamps

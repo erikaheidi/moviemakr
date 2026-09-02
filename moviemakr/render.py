@@ -19,7 +19,7 @@ from typing import Any
 
 from .assemble import assemble
 from .config import Scene, Script
-from .docker import (
+from .backends.sdcpp import (
     check_gpu,
     container_name,
     docker_argv,

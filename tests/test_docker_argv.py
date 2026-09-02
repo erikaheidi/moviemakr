@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from moviemakr.docker import (
+from moviemakr.backends.sdcpp import (
     check_gpu,
     container_name,
     device_gids,

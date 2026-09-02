@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Script
-from .docker import fingerprint
+from .backends.sdcpp import fingerprint
 from .media import probe_clip
 from .render import resolve_refs
 from .state import load_state, scene_entry
