@@ -16,11 +16,14 @@ from typing import Any, ClassVar
 
 import yaml
 
+from .backends import DEFAULT_BACKEND, check_name
 from .errors import ConfigError, check_keys
 from .layout import RunLayout, Workspace, slugify
 from .media import CONTAINERS
 
-TOP_KEYS = frozenset({"name", "model", "docker", "defaults", "continuity", "output", "scenes"})
+TOP_KEYS = frozenset(
+    {"name", "backend", "model", "docker", "defaults", "continuity", "output", "scenes"}
+)
 MODEL_KEYS = frozenset({"root", "diffusion_model", "llm", "vae", "audio_vae"})
 MODEL_REQUIRED = ("diffusion_model", "llm", "vae")
 DOCKER_KEYS = frozenset({"image", "devices", "run_as_current_user"})
@@ -186,6 +189,8 @@ class Script:
     output: OutputConfig
     scenes: tuple[Scene, ...]
     layout: RunLayout
+    # Last, with a default, so constructing a Script positionally keeps working.
+    backend: str = DEFAULT_BACKEND
 
     @property
     def run_dir(self) -> Path:
@@ -267,6 +272,7 @@ def load_script(script_path: Path, workspace: Workspace) -> Script:
     check_keys("top level", raw, TOP_KEYS)
 
     name = raw.get("name") or script_path.stem
+    backend = check_name(str(raw.get("backend") or DEFAULT_BACKEND))
 
     # --- model ---
     model = _as_dict(raw, "model")
@@ -392,4 +398,5 @@ def load_script(script_path: Path, workspace: Workspace) -> Script:
         output=output,
         scenes=tuple(scenes),
         layout=layout,
+        backend=backend,
     )
