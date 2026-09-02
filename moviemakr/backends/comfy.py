@@ -18,10 +18,24 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
+import sys
+import time
+import urllib.error
+import urllib.request
+import uuid
 from collections.abc import Sequence
 from pathlib import Path
 
 from ..config import Script
+from ..errors import ConfigError
+
+# Polled rather than driven from the websocket: /history is enough to know when a
+# prompt finished and whether it worked, and polling keeps the package's only
+# dependency PyYAML. A render takes minutes, so a 2s interval costs nothing.
+POLL_SECONDS = 2.0
+HEARTBEAT_SECONDS = 30.0
+HTTP_TIMEOUT = 30.0
 
 # MiniMax H3 samples on a 17k+5 frame grid at 24 fps: 5, 22, 39, 56 ... A length
 # off the grid is silently snapped by the node, so do it here where it is visible.
@@ -282,6 +296,157 @@ def fingerprint(scene, script: Script, inputs: Sequence[Path] = (), *,
     )
 
 
+# --------------------------------------------------------------------------
+# talking to the server (pure parts)
+# --------------------------------------------------------------------------
+
+
+def prompt_payload(graph: dict, prompt_id: str, client_id: str) -> dict:
+    return {"prompt": graph, "prompt_id": prompt_id, "client_id": client_id}
+
+
+def history_entry(history: dict, prompt_id: str) -> dict | None:
+    """ComfyUI keys /history by prompt id, even when asked for just one."""
+    return (history or {}).get(prompt_id)
+
+
+def is_finished(entry: dict | None) -> bool:
+    return bool((entry or {}).get("status", {}).get("completed"))
+
+
+def failure_reason(entry: dict | None) -> str | None:
+    """None when the prompt succeeded, else a one-line reason."""
+    status = (entry or {}).get("status") or {}
+    if status.get("status_str") == "success":
+        return None
+    for kind, payload in reversed(status.get("messages") or []):
+        if kind == "execution_error" and isinstance(payload, dict):
+            node = payload.get("node_type") or payload.get("node_id") or "?"
+            return f"{node}: {payload.get('exception_message') or payload.get('exception_type')}"
+    return status.get("status_str") or "unknown failure"
+
+
+def queue_has(queue: dict, prompt_id: str) -> bool:
+    """Is the prompt still running or waiting?
+
+    /history only gains an entry once a prompt *finishes*, so "absent from
+    history" is the normal state while rendering. The queue is what separates
+    still-working from vanished - without this check a prompt that the server
+    dropped would be waited on forever.
+    """
+    for key in ("queue_running", "queue_pending"):
+        for item in (queue or {}).get(key) or []:
+            if len(item) > 1 and item[1] == prompt_id:
+                return True
+    return False
+
+
+def saved_files(entry: dict | None) -> list[dict]:
+    """Files the prompt wrote, newest node last.
+
+    SaveVideo reports its mp4 under the key `images`, not `video` - reading
+    `video` here would silently find nothing and look like a failed render.
+    """
+    files: list[dict] = []
+    for node_output in ((entry or {}).get("outputs") or {}).values():
+        for key in ("images", "gifs", "video", "audio"):
+            for item in node_output.get(key) or []:
+                if isinstance(item, dict) and item.get("filename"):
+                    files.append(item)
+    return files
+
+
+def output_path(output_dir: Path, item: dict) -> Path:
+    """Where a reported output lives on the host side of ComfyUI's output dir."""
+    return Path(output_dir) / (item.get("subfolder") or "") / item["filename"]
+
+
+def view_url(base_url: str, item: dict) -> str:
+    from urllib.parse import urlencode
+
+    query = urlencode({
+        "filename": item["filename"],
+        "subfolder": item.get("subfolder") or "",
+        "type": item.get("type") or "output",
+    })
+    return f"{base_url}/view?{query}"
+
+
+# --------------------------------------------------------------------------
+# talking to the server (effects)
+# --------------------------------------------------------------------------
+
+
+def _request(url: str, data: bytes | None = None, *, timeout: float = HTTP_TIMEOUT):
+    req = urllib.request.Request(url, data=data,
+                                 headers={"Content-Type": "application/json"} if data else {})
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
+def get_json(url: str, *, timeout: float = HTTP_TIMEOUT) -> dict:
+    with _request(url, timeout=timeout) as resp:
+        return json.loads(resp.read().decode())
+
+
+def post_json(url: str, payload: dict, *, timeout: float = HTTP_TIMEOUT) -> dict:
+    body = json.dumps(payload).encode()
+    try:
+        with _request(url, body, timeout=timeout) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        # A 400 here is a rejected graph, and its node_errors say exactly which
+        # input the server disliked. Surfacing that beats "HTTP 400".
+        detail = exc.read().decode(errors="replace")
+        try:
+            parsed = json.loads(detail)
+            detail = json.dumps(parsed.get("node_errors") or parsed, indent=2)
+        except json.JSONDecodeError:
+            pass
+        raise ConfigError(f"ComfyUI rejected the prompt ({exc.code}):\n{detail}") from None
+
+
+def check_server(script: Script) -> tuple[bool, str]:
+    """Preflight: the server is up, and it has the models the script names.
+
+    Checked before committing to a long render, for the same reason sdcpp asks
+    the container which backends it can see: the alternative is finding out after
+    the queue has accepted the job.
+    """
+    comfy = script.comfy
+    assert comfy is not None
+    try:
+        info = get_json(f"{comfy.url}/object_info", timeout=10)
+    except (urllib.error.URLError, OSError) as exc:
+        return False, f"cannot reach ComfyUI at {comfy.url}: {exc}"
+
+    wanted = [
+        ("UNETLoader", "unet_name", comfy.diffusion_model),
+        ("CLIPLoader", "clip_name", comfy.text_encoder),
+        ("VAELoader", "vae_name", comfy.video_vae),
+        ("VAELoader", "vae_name", comfy.audio_vae),
+    ]
+    if comfy.lora:
+        wanted.append(("LoraLoaderModelOnly", "lora_name", comfy.lora))
+
+    missing = []
+    for node, field, name in wanted:
+        spec = ((info.get(node) or {}).get("input") or {}).get("required") or {}
+        options = (spec.get(field) or [None])[0]
+        if isinstance(options, list) and name not in options:
+            missing.append(f"{name} (not offered by {node}.{field})")
+    if missing:
+        return False, "ComfyUI does not have:\n  " + "\n  ".join(missing)
+    return True, f"ComfyUI ready at {comfy.url}"
+
+
+def interrupt(url: str) -> None:
+    """Stop the running prompt; the analogue of killing the sdcpp container."""
+    try:
+        post_json(f"{url}/interrupt", {})
+    except Exception:  # noqa: BLE001 - best effort on the way out
+        pass
+
+
 def effective_overlap(scene, *, has_previous: bool) -> int:
     """Frames this scene will actually be anchored on, snapped to the grid.
 
@@ -291,3 +456,164 @@ def effective_overlap(scene, *, has_previous: bool) -> int:
     if not has_previous or not scene.chain_from_previous:
         return 0
     return align_down(scene.settings.overlap_frames)
+
+
+def input_name(script: Script, prev_slug: str) -> str:
+    """Path of a scene's anchor clip, relative to ComfyUI's input directory.
+
+    A subfolder is fine even though LoadVideo's dropdown only lists top-level
+    files: the node validates with `exists_annotated_filepath`, and declaring its
+    own validator makes ComfyUI skip the combo-membership check.
+    """
+    return f"{OUTPUT_PREFIX}/{script.layout.name_slug}/{prev_slug}.tail.mp4"
+
+
+def prepare_chain(scene, script: Script, prev_clip: Path | None, *,
+                  dry_run: bool = False) -> tuple[str | None, Path | None, int]:
+    """Cut the previous scene's tail into ComfyUI's input dir.
+
+    Returns (name the graph will use, host path for hashing, frames anchored).
+    A dry run computes the names but writes nothing, so it stays free.
+    """
+    from ..media import extract_tail_clip
+
+    frames = effective_overlap(scene, has_previous=prev_clip is not None)
+    if frames <= 0 or prev_clip is None:
+        return None, None, 0
+
+    comfy = script.comfy
+    assert comfy is not None
+    if comfy.input_dir is None:
+        raise ConfigError(
+            "comfy.input_dir is required to chain scenes: the anchor clip has to "
+            "be written where ComfyUI can read it"
+        )
+
+    name = input_name(script, prev_clip.stem)
+    host = comfy.input_dir / name
+    if dry_run:
+        return name, host, frames
+    if not prev_clip.is_file():
+        return None, None, 0
+    if not extract_tail_clip(prev_clip, host, frames, scene.settings.fps):
+        return None, None, 0
+    return name, host, frames
+
+
+def collect(entry: dict, dest: Path, comfy) -> bool:
+    """Bring the rendered clip back to the workspace.
+
+    A local ComfyUI shares its output directory with us, so the file is copied.
+    Falling back to /view keeps a remote server workable, at the cost of pushing
+    a few hundred MB through HTTP.
+    """
+    files = saved_files(entry)
+    if not files:
+        return False
+    item = files[-1]
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if comfy.output_dir is not None:
+        src = output_path(comfy.output_dir, item)
+        if src.is_file():
+            shutil.copyfile(src, dest)
+            return dest.is_file() and dest.stat().st_size > 0
+
+    try:
+        with _request(view_url(comfy.url, item), timeout=HTTP_TIMEOUT * 10) as resp, \
+                dest.open("wb") as out:
+            shutil.copyfileobj(resp, out)
+    except (urllib.error.URLError, OSError):
+        return False
+    return dest.is_file() and dest.stat().st_size > 0
+
+
+def run_scene(graph: dict, script: Script, dest: Path, log_path: Path, *,
+              label: str = "") -> int:
+    """Submit one graph and wait for it. Returns a shell-style exit code.
+
+    Non-zero on any failure so the render loop's existing retry and backoff
+    handle ComfyUI exactly as they handle a container that exited badly.
+    """
+    comfy = script.comfy
+    assert comfy is not None
+    prompt_id = str(uuid.uuid4())
+    client_id = uuid.uuid4().hex
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("w") as log:
+        log.write(f"POST {comfy.url}/prompt  prompt_id={prompt_id}\n\n")
+        log.write(format_graph(graph) + "\n\n")
+        log.flush()
+
+        try:
+            post_json(f"{comfy.url}/prompt", prompt_payload(graph, prompt_id, client_id))
+        except ConfigError as exc:
+            print(f"  ! {exc}", file=sys.stderr)
+            log.write(f"{exc}\n")
+            return 2
+        except (urllib.error.URLError, OSError) as exc:
+            print(f"  ! cannot reach ComfyUI: {exc}", file=sys.stderr)
+            log.write(f"unreachable: {exc}\n")
+            return 3
+
+        started = time.time()
+        last_beat = started
+        try:
+            while True:
+                time.sleep(POLL_SECONDS)
+                try:
+                    entry = history_entry(
+                        get_json(f"{comfy.url}/history/{prompt_id}"), prompt_id)
+                except (urllib.error.URLError, OSError) as exc:
+                    # A blip while the server is busy is not a failed render.
+                    log.write(f"poll error (continuing): {exc}\n")
+                    continue
+
+                if is_finished(entry):
+                    break
+
+                # Absent from history is normal while rendering, but absent from
+                # the queue too means the server dropped it - stop rather than
+                # poll forever.
+                if entry is None:
+                    try:
+                        if not queue_has(get_json(f"{comfy.url}/queue"), prompt_id):
+                            msg = f"prompt {prompt_id} is in neither the queue nor the history"
+                            print(f"  ! {msg}", file=sys.stderr)
+                            log.write(msg + "\n")
+                            return 5
+                    except (urllib.error.URLError, OSError):
+                        pass  # a blip; the next poll will settle it
+
+                now = time.time()
+                if now - last_beat >= HEARTBEAT_SECONDS:
+                    last_beat = now
+                    line = f"  {label}still rendering ({fmt_elapsed(now - started)})"
+                    print(line, flush=True)
+                    log.write(line + "\n")
+                    log.flush()
+        except KeyboardInterrupt:
+            print(f"\ninterrupting ComfyUI prompt {prompt_id} ...", file=sys.stderr)
+            interrupt(comfy.url)
+            raise
+
+        reason = failure_reason(entry)
+        if reason:
+            print(f"  ! {reason}", file=sys.stderr)
+            log.write(f"failed: {reason}\n")
+            return 1
+
+        if not collect(entry, dest, comfy):
+            msg = "prompt succeeded but no output file could be collected"
+            print(f"  ! {msg}", file=sys.stderr)
+            log.write(msg + "\n" + json.dumps(entry.get("outputs") or {}, indent=2) + "\n")
+            return 4
+
+        log.write(f"collected -> {dest}\n")
+        return 0
+
+
+def fmt_elapsed(seconds: float) -> str:
+    minutes, secs = divmod(int(seconds), 60)
+    return f"{minutes}m{secs:02d}s" if minutes else f"{secs}s"

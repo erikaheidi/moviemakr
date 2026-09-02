@@ -281,6 +281,21 @@ comfy adds a third that sd-cli cannot express, `overlap_frames` (default 22):
 - It costs compute: at length 124 an overlap of 22 keeps 102 new frames, so about
   18% of each scene is regenerated and thrown away.
 
+### ComfyUI gotchas (don't "simplify" these away)
+
+- **`/history` is empty while a prompt runs.** An entry appears only when it
+  finishes, so "absent from history" is the normal working state. The queue is
+  what separates still-rendering from dropped — without that check the wait loop
+  spins forever, which is exactly what happened the first time.
+- **`SaveVideo` reports its mp4 under `images`**, not `video`. Reading `video`
+  finds nothing and looks like a failed render.
+- **`run_scene` returns shell-style codes** so the existing retry loop drives it
+  unchanged: 0 ok, 1 execution error, 2 graph rejected, 3 unreachable, 4 nothing
+  collected, 5 prompt vanished.
+- **Collection prefers a file copy** over `/view`: a local ComfyUI shares its
+  output directory, and pushing hundreds of MB through HTTP for no reason is
+  slower and can time out. The HTTP path stays as the remote-server fallback.
+
 ### GPU / container gotchas (don't "simplify" these away)
 
 - The container runs as `--user $(id -u):$(id -g)` and must `--group-add` the

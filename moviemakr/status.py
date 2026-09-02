@@ -15,11 +15,33 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .config import Script
+from .backends import comfy as comfy_backend
 from .backends.sdcpp import fingerprint
+from .config import Script
 from .media import probe_clip
 from .render import resolve_refs
 from .state import load_state, scene_entry
+
+
+def _current_fingerprint(scene, script: Script, prev_chain: Path | None):
+    """Recompute a scene's fingerprint the way its backend would.
+
+    Each backend hashes a different thing, so asking the wrong one would report
+    every scene of a comfy run as stale and re-render the lot.
+    """
+    layout = script.layout
+    if script.backend == "comfy":
+        # Names only: this must not cut a tail clip just to answer `status`.
+        name, host, _ = comfy_backend.prepare_chain(scene, script, prev_chain, dry_run=True)
+        return comfy_backend.fingerprint(
+            scene, script, [host] if host is not None else [], overlap_clip=name
+        )
+    refs, _ = resolve_refs(scene, prev_chain, dry_run=False)
+    dirs = [
+        layout.refvideo_dir(src, scene.settings.width, scene.settings.height)
+        for src in scene.ref_videos
+    ]
+    return fingerprint(scene, script, refs, dirs)
 
 
 def scene_rows(script: Script) -> list[dict[str, Any]]:
@@ -33,7 +55,7 @@ def scene_rows(script: Script) -> list[dict[str, Any]]:
     state = load_state(layout.state_file)
 
     rows: list[dict[str, Any]] = []
-    prev_frame: Path | None = None
+    prev_chain: Path | None = None
     for scene in script.scenes:
         clip = layout.clip(scene.slug)
         entry = scene_entry(state, scene.id)
@@ -44,12 +66,7 @@ def scene_rows(script: Script) -> list[dict[str, Any]]:
             if stored is None:
                 scene_state = entry.get("state", "rendered")
             else:
-                refs, _ = resolve_refs(scene, prev_frame, dry_run=False)
-                dirs = [
-                    layout.refvideo_dir(src, scene.settings.width, scene.settings.height)
-                    for src in scene.ref_videos
-                ]
-                current = fingerprint(scene, script, refs, dirs)
+                current = _current_fingerprint(scene, script, prev_chain)
                 scene_state = "rendered" if stored == current else "stale"
         else:
             probe = {}
@@ -61,7 +78,10 @@ def scene_rows(script: Script) -> list[dict[str, Any]]:
             "probe": probe,
             "elapsed": entry.get("elapsed"),
         })
-        frame = layout.frame(scene.slug)
-        prev_frame = frame if frame.is_file() else None
+        if script.backend == "comfy":
+            prev_chain = clip if clip.is_file() else None
+        else:
+            frame = layout.frame(scene.slug)
+            prev_chain = frame if frame.is_file() else None
 
     return rows
