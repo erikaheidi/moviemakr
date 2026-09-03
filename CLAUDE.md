@@ -4,11 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`moviemakr` renders a multi-scene movie from a YAML script. Each scene is one
-`docker run` of `sd-cli` (stable-diffusion.cpp, MiniMax-H3 Ref2VA) in `vid_gen`
-mode — the model only produces a few seconds of video per invocation, so the tool
-renders scenes in order, resumes where it left off, and stitches the clips into a
-single movie with ffmpeg.
+`moviemakr` renders a multi-scene movie from a YAML script. The model only
+produces a few seconds of video per invocation, so the tool renders scenes in
+order, resumes where it left off, and stitches the clips into a single movie with
+ffmpeg.
+
+Two engines render a scene, chosen by the script's `backend:` key:
+
+- **`sdcpp`** (default) — one `docker run` of `sd-cli` (stable-diffusion.cpp,
+  MiniMax-H3 Ref2VA) in `vid_gen` mode.
+- **`comfy`** — an API graph submitted to a running ComfyUI. Slower to set up,
+  but it can anchor a whole *segment* of the previous scene, audio included, which
+  sd-cli cannot express.
 
 The code lives in the `moviemakr/` package; `moviemakr.py` at the root is a
 four-line launcher so `./moviemakr.py …` keeps working without installing
@@ -65,7 +72,7 @@ midpoints, never the first or last frame, which are the blurriest.
 ### Tests
 
 ```bash
-.venv/bin/python -m pytest          # ~390 tests, under a second
+.venv/bin/python -m pytest          # ~535 tests, under a second
 ```
 
 The suite is hermetic — no Docker, GPU, or ffmpeg. That works because `sd_args`
@@ -280,6 +287,15 @@ comfy adds a third that sd-cli cannot express, `overlap_frames` (default 22):
   trim would shift the picture and leave the sound where it was.
 - It costs compute: at length 124 an overlap of 22 keeps 102 new frames, so about
   18% of each scene is regenerated and thrown away.
+
+**Measured on gfx1151**, two 56-frame scenes at 640x384 with a 22-frame overlap:
+7m26s under `--cache-ram 24 96` (10m25s under `--cache-none`). The anchored frames
+match the previous scene at ~33.8 dB PSNR against 19.9 dB for frames the same
+distance apart in ordinary motion - so the guide demonstrably reproduces the tail
+rather than merely not erroring. The residual seam is a ~2-4 frame step rather
+than a clean 1-frame one (33.5 dB against ~43 dB for a true adjacent pair),
+because scene N+1 *regenerates* the anchor instead of copying it. Crossfading the
+overlap instead of trimming it is the obvious next lever if that ever matters.
 
 ### ComfyUI gotchas (don't "simplify" these away)
 
