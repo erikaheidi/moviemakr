@@ -27,7 +27,7 @@ import uuid
 from collections.abc import Sequence
 from pathlib import Path
 
-from ..config import Script
+from ..config import Script, align_canvas
 from ..errors import ConfigError
 
 # Polled rather than driven from the websocket: /history is enough to know when a
@@ -85,16 +85,24 @@ def output_prefix(script: Script, scene) -> str:
 
 
 def build_graph(scene, script: Script, *, first_frame: str | None = None,
-                overlap_clip: str | None = None) -> dict[str, dict]:
+                overlap_clip: str | None = None,
+                refs: Sequence[str] = ()) -> dict[str, dict]:
     """The API-format prompt for one scene.
 
-    `first_frame` and `overlap_clip` are paths relative to ComfyUI's input
-    directory, already placed there by the caller - the graph only names them.
+    `first_frame`, `overlap_clip` and `refs` are paths relative to ComfyUI's
+    input directory, already placed there by the caller - the graph only names
+    them.
 
-    They are alternative ways to chain. `overlap_clip` anchors a whole tail
-    segment of the previous scene, its soundtrack included, so motion and the
-    soundscape continue across the seam; `first_frame` anchors a single still,
-    which restarts both. When both are given the overlap wins.
+    `first_frame` and `overlap_clip` are alternative ways to chain. `overlap_clip`
+    anchors a whole tail segment of the previous scene, its soundtrack included,
+    so motion and the soundscape continue across the seam; `first_frame` anchors a
+    single still, which restarts both. When both are given the overlap wins.
+
+    `refs` are out-of-timeline reference images - character sheets and anchors.
+    They select a different conditioning node, and their order is the `<Picture N>`
+    contract the prompt refers to. Refs and an overlap anchor compose: the model
+    reads `minimax_refs` and `minimax_keyframes` independently and concatenates
+    their latents, so a scene can hold a character *and* continue a movement.
     """
     comfy = script.comfy
     if comfy is None:
@@ -102,6 +110,8 @@ def build_graph(scene, script: Script, *, first_frame: str | None = None,
 
     settings = scene.settings
     length = align_up(settings.video_frames)
+    width = align_canvas(settings.width)
+    height = align_canvas(settings.height)
     steps = settings.steps if settings.steps is not None else comfy.steps
 
     graph: dict[str, dict] = {
@@ -149,14 +159,32 @@ def build_graph(scene, script: Script, *, first_frame: str | None = None,
         "clip": ["clip", 0],
         "vae": ["vae", 0],
         "prompt": scene.full_prompt(),
-        "width": settings.width,
-        "height": settings.height,
+        "width": width,
+        "height": height,
         "length": length,
     }
-    if first_frame is not None and overlap_clip is None:
-        graph["first"] = {"class_type": "LoadImage", "inputs": {"image": first_frame}}
-        cond_inputs["first_frame"] = ["first", 0]
-    graph["cond"] = {"class_type": "MiniMaxH3ImageToVideo", "inputs": cond_inputs}
+
+    if refs:
+        # ReferenceToVideo takes no first_frame/last_frame - in-timeline anchoring
+        # is AddGuide's job, and the two compose.
+        cond_inputs["audio_vae"] = ["avae", 0]
+        cond_inputs["ref_image_size"] = comfy.ref_image_size
+        # Autogrow inputs are ONE nested input, not flat ref_image_N keys. Flat
+        # keys reach execute() as unexpected kwargs and raise there - not at
+        # validation, which accepts them. The node iterates .values(), so this
+        # order is the prompt's <Picture N> contract.
+        ref_images: dict[str, list] = {}
+        for i, name in enumerate(refs, start=1):
+            node = f"ref{i}"
+            graph[node] = {"class_type": "LoadImage", "inputs": {"image": name}}
+            ref_images[f"ref_image_{i}"] = [node, 0]
+        cond_inputs["ref_images"] = ref_images
+        graph["cond"] = {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": cond_inputs}
+    else:
+        if first_frame is not None and overlap_clip is None:
+            graph["first"] = {"class_type": "LoadImage", "inputs": {"image": first_frame}}
+            cond_inputs["first_frame"] = ["first", 0]
+        graph["cond"] = {"class_type": "MiniMaxH3ImageToVideo", "inputs": cond_inputs}
 
     conditioning = ["cond", 0]
     if overlap_clip is not None:
@@ -282,16 +310,18 @@ def digest(graph_text: str, ref_tokens: Sequence[str]) -> str:
 
 
 def fingerprint(scene, script: Script, inputs: Sequence[Path] = (), *,
-                first_frame: str | None = None, overlap_clip: str | None = None) -> str:
+                first_frame: str | None = None, overlap_clip: str | None = None,
+                refs: Sequence[str] = ()) -> str:
     """Hash of the graph plus the content of every host file it reads.
 
     `inputs` are the host-side paths of those files. Their *content* is hashed,
     not their names, so re-rendering scene N invalidates scene N+1 whose anchor
-    changed underneath an unchanged filename.
+    changed underneath an unchanged filename, and swapping an anchor image
+    invalidates every scene that used it.
     """
     return digest(
         canonical(build_graph(scene, script, first_frame=first_frame,
-                              overlap_clip=overlap_clip)),
+                              overlap_clip=overlap_clip, refs=refs)),
         [ref_token(p) for p in inputs],
     )
 
@@ -311,7 +341,18 @@ def history_entry(history: dict, prompt_id: str) -> dict | None:
 
 
 def is_finished(entry: dict | None) -> bool:
-    return bool((entry or {}).get("status", {}).get("completed"))
+    """Has the prompt stopped, either way?
+
+    Not `completed`: that flag means *succeeded*, and a prompt that raised has
+    `{"status_str": "error", "completed": false}`. Waiting on `completed` alone
+    hangs forever on exactly the failures the retry loop exists to handle - and
+    the vanished-prompt guard does not help, because the entry *is* there.
+
+    An entry only appears in /history once the prompt is done, so its presence
+    with any status is itself terminal.
+    """
+    status = (entry or {}).get("status") or {}
+    return bool(status.get("completed")) or status.get("status_str") is not None
 
 
 def failure_reason(entry: dict | None) -> str | None:
@@ -405,6 +446,95 @@ def post_json(url: str, payload: dict, *, timeout: float = HTTP_TIMEOUT) -> dict
         raise ConfigError(f"ComfyUI rejected the prompt ({exc.code}):\n{detail}") from None
 
 
+def pairing_warnings(script: Script) -> list[str]:
+    """Warn when the checkpoint looks wrong for how the scenes are conditioned.
+
+    MiniMax H3 ships as two task variants. `ref2va` reads reference images;
+    `fl2va` reads first/last keyframes. Crossing them does not error - ComfyUI
+    runs the graph and the model produces something, just not what the script
+    describes - and the same is true of a turbo LoRA trained for the other one.
+    That silence is the whole reason for guessing here.
+
+    Heuristic on purpose, by filename, so it warns rather than refuses: the names
+    follow Comfy-Org's convention, but a renamed file is not an error.
+    """
+    comfy = script.comfy
+    if comfy is None:
+        return []
+    uses_refs = any(scene.ref_images for scene in script.scenes)
+    model, lora = comfy.diffusion_model.lower(), (comfy.lora or "").lower()
+    out = []
+
+    if uses_refs and "fl2va" in model:
+        out.append(
+            f"{comfy.diffusion_model} looks like an fl2va (first/last frame) model, "
+            f"but scenes carry reference images, which need a ref2va model."
+        )
+    if not uses_refs and "ref2va" in model:
+        out.append(
+            f"{comfy.diffusion_model} looks like a ref2va (reference) model, but no "
+            f"scene has reference images; an fl2va model fits keyframe chaining."
+        )
+    if lora:
+        if "ref2v" in lora and "fl2va" in model:
+            out.append(f"{comfy.lora} is a ref2v LoRA on an fl2va model.")
+        if "fl2v" in lora and "ref2va" in model:
+            out.append(f"{comfy.lora} is an fl2v LoRA on a ref2va model.")
+    return out
+
+
+AUTOGROW_TYPE = "COMFY_AUTOGROW_V3"
+
+
+def validate_graph(graph: dict[str, dict], info: dict) -> list[str]:
+    """Check a graph against the server's own schema, before spending GPU time.
+
+    /prompt's own validation is permissive - it accepted flat `ref_image_1` keys
+    that then raised inside execute() as unexpected kwargs, after the text encoder
+    had loaded. So the shapes are checked here instead.
+
+    Autogrow inputs are the subtle one: they are declared as a single input whose
+    value is a *dict* of prefixed entries. A flat key is not an input at all.
+    """
+    problems: list[str] = []
+    for node_id, node in graph.items():
+        class_type = node.get("class_type")
+        spec = info.get(class_type)
+        if spec is None:
+            problems.append(f"{node_id}: no such node type {class_type!r}")
+            continue
+        required = (spec.get("input") or {}).get("required") or {}
+        optional = (spec.get("input") or {}).get("optional") or {}
+        declared = {**required, **optional}
+        given = node.get("inputs") or {}
+
+        autogrow = {
+            name for name, decl in declared.items()
+            if isinstance(decl, list) and decl and decl[0] == AUTOGROW_TYPE
+        }
+
+        for key, value in given.items():
+            # A dynamic combo serialises as extra dotted keys (`format.codec`).
+            if key in declared or "." in key:
+                if key in autogrow and not isinstance(value, dict):
+                    problems.append(
+                        f"{node_id} ({class_type}): {key} is an autogrow input and "
+                        f"needs a dict of prefixed entries, got {type(value).__name__}"
+                    )
+                continue
+            hint = ""
+            for name in autogrow:
+                prefix = ((declared[name][1] or {}).get("template") or {}).get("prefix")
+                if prefix and key.startswith(prefix):
+                    hint = f" - it belongs inside the {name!r} dict"
+                    break
+            problems.append(f"{node_id} ({class_type}): unknown input {key!r}{hint}")
+
+        for key in set(required) - set(given):
+            problems.append(f"{node_id} ({class_type}): missing required input {key!r}")
+    return problems
+
+
 def check_server(script: Script) -> tuple[bool, str]:
     """Preflight: the server is up, and it has the models the script names.
 
@@ -436,6 +566,14 @@ def check_server(script: Script) -> tuple[bool, str]:
             missing.append(f"{name} (not offered by {node}.{field})")
     if missing:
         return False, "ComfyUI does not have:\n  " + "\n  ".join(missing)
+
+    # Check the shape of a real graph too, not just the model names. A scene with
+    # references exercises the most error-prone node, so prefer one of those.
+    scene = next((s for s in script.scenes if s.ref_images), script.scenes[0])
+    probe = build_graph(scene, script, refs=[f"probe{i}" for i in range(len(scene.ref_images))])
+    if problems := validate_graph(probe, info):
+        return False, "the graph does not match this server's schema:\n  " + "\n  ".join(problems)
+
     return True, f"ComfyUI ready at {comfy.url}"
 
 
@@ -456,6 +594,49 @@ def effective_overlap(scene, *, has_previous: bool) -> int:
     if not has_previous or not scene.chain_from_previous:
         return 0
     return align_down(scene.settings.overlap_frames)
+
+
+def ref_input_name(script: Script, ref: Path) -> str:
+    """Path of a reference image, relative to ComfyUI's input directory.
+
+    Named by content digest, not by the source filename: two anchors called
+    `josy.jpg` in different asset folders would otherwise collide, and a replaced
+    asset under an unchanged name would keep the stale copy.
+    """
+    digest = hashlib.sha256(ref.read_bytes()).hexdigest()[:16] if ref.is_file() else "missing"
+    return f"{OUTPUT_PREFIX}/{script.layout.name_slug}/refs/{digest}{ref.suffix.lower()}"
+
+
+def prepare_refs(script: Script, refs: Sequence[Path], *,
+                 dry_run: bool = False) -> list[tuple[str, Path]]:
+    """Copy reference images where ComfyUI can read them.
+
+    LoadImage resolves names inside ComfyUI's own input directory and refuses to
+    escape it, so an asset living in the workspace has to be copied in. Returns
+    (name for the graph, host path for hashing) in `<Picture N>` order.
+    """
+    if not refs:
+        return []
+    comfy = script.comfy
+    assert comfy is not None
+    if comfy.input_dir is None:
+        raise ConfigError(
+            "comfy.input_dir is required for reference images: they have to be "
+            "copied where ComfyUI can read them"
+        )
+
+    out: list[tuple[str, Path]] = []
+    for ref in refs:
+        name = ref_input_name(script, ref)
+        dest = comfy.input_dir / name
+        if not dry_run and ref.is_file():
+            # Content-addressed, so an existing file of the same name is the same
+            # image and re-copying it would only churn the disk.
+            if not dest.is_file() or dest.stat().st_size != ref.stat().st_size:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ref, dest)
+        out.append((name, ref))
+    return out
 
 
 def input_name(script: Script, prev_slug: str) -> str:

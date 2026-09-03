@@ -9,7 +9,13 @@ from __future__ import annotations
 
 import pytest
 
-from moviemakr.backends.comfy import align_down, build_graph, effective_overlap, fingerprint
+from moviemakr.backends.comfy import (
+    align_canvas,
+    align_down,
+    build_graph,
+    effective_overlap,
+    fingerprint,
+)
 from moviemakr.assemble import overlap_trim
 from moviemakr.media import NormalizeSpec, normalize_cmd, tail_clip_cmd, tail_start
 
@@ -208,3 +214,27 @@ def test_the_trim_matches_the_anchor_exactly(load_comfy):
     state = {"scenes": {scene.id: {"overlap_frames": anchored}}}
     assert overlap_trim(scene, state) == pytest.approx(anchored / 24)
     assert anchored == align_down(30)
+
+
+# --- canvas grid -----------------------------------------------------------
+
+
+def test_align_canvas_leaves_multiples_of_32_alone():
+    for n in (32, 320, 544, 640, 960, 1088):
+        assert align_canvas(n) == n
+
+
+def test_align_canvas_rounds_up():
+    # 540x960 is what every ported sdcpp script carries, and sd-cli snaps it the
+    # same way, so a port lands on the same canvas on both backends.
+    assert align_canvas(540) == 544
+    assert align_canvas(1) == 32
+    assert align_canvas(33) == 64
+    assert align_canvas(1079) == 1088
+
+
+def test_graph_uses_the_snapped_canvas(load_comfy):
+    script = load_comfy({"defaults": {"width": 540, "height": 960}})
+    graph = build_graph(script.scenes[0], script)
+    assert graph["cond"]["inputs"]["width"] == 544
+    assert graph["cond"]["inputs"]["height"] == 960

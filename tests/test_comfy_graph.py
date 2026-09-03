@@ -54,7 +54,7 @@ MINIMAL_GRAPH = {
             "clip": ["clip", 0],
             "vae": ["vae", 0],
             "prompt": "A test scene.",
-            "width": 540,
+            "width": 544,   # snapped from the script's 540 onto the 32px canvas grid
             "height": 960,
             "length": 124,
         },
@@ -105,7 +105,7 @@ MINIMAL_GRAPH = {
     },
 }
 
-MINIMAL_FP = "48dba1f2dd3ebd2a0cbf6eea03ccce2afafef8cb0dd1a0897bc5adb8bd297c84"
+MINIMAL_FP = "e0a6e54dba688618dda38a1f9cbf6ec18ab3e83fdb7ce070464b76baf38a2df3"
 
 
 @pytest.fixture
@@ -282,15 +282,28 @@ def test_comfy_rejects_a_docker_block(write_comfy, workspace):
         load_script(write_comfy({"docker": {"image": "x"}}), workspace)
 
 
-def test_comfy_rejects_ref_images_rather_than_dropping_them(write_comfy, workspace, make_asset):
-    """Silently ignoring anchors would lose a character across a whole script."""
+def test_comfy_rejects_ref_videos_rather_than_dropping_them(write_comfy, workspace, make_asset):
+    """Silently ignoring them would quietly change the conditioning."""
     from moviemakr.config import load_script
 
-    make_asset("anchor.png")
+    make_asset("clip.mp4")
     script = write_comfy({"scenes": [
-        {"id": "opening", "prompt": "A test scene.", "ref_images": ["anchor.png"]},
+        {"id": "opening", "prompt": "A test scene.", "ref_videos": ["clip.mp4"]},
     ]})
-    with pytest.raises(ConfigError, match="does not support ref_images"):
+    with pytest.raises(ConfigError, match="does not support ref_videos"):
+        load_script(script, workspace)
+
+
+def test_comfy_rejects_more_refs_than_the_node_accepts(write_comfy, workspace, make_asset):
+    from moviemakr.config import load_script
+
+    for i in range(10):
+        make_asset(f"a{i}.png", f"anchor-{i}".encode())
+    script = write_comfy({"scenes": [
+        {"id": "opening", "prompt": "A test scene.",
+         "ref_images": [f"a{i}.png" for i in range(10)]},
+    ]})
+    with pytest.raises(ConfigError, match="at most 9"):
         load_script(script, workspace)
 
 

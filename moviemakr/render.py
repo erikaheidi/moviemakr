@@ -178,8 +178,15 @@ def preflight(script: Script, opts: RenderOptions) -> int | None:
     from different evidence: sdcpp asks the container which compute backends it
     can see, comfy asks the server whether it holds the named models.
     """
+    if script.backend == "comfy":
+        # Pure and offline, so it runs on a dry run too - a mismatched checkpoint
+        # is exactly what a dry run is for catching. It warns, never blocks.
+        for warning in comfy_backend.pairing_warnings(script):
+            print(f"warning: {warning}", file=sys.stderr)
+
     if opts.dry_run:
-        return None
+        return None  # a dry run must stay free, and must work with nothing running
+
     if script.backend == "comfy":
         ok, message = comfy_backend.check_server(script)
         hint = "  Start ComfyUI, or fix the model names under comfy:."
@@ -249,13 +256,18 @@ def build_comfy_job(scene: Scene, script: Script, prev_clip: Path | None, *,
     itself and the tail is cut from it here.
     """
     name, host, frames = comfy_backend.prepare_chain(scene, script, prev_clip, dry_run=dry_run)
-    graph = comfy_backend.build_graph(scene, script, overlap_clip=name)
-    inputs = [host] if host is not None else []
+    placed = comfy_backend.prepare_refs(script, scene.ref_images, dry_run=dry_run)
+    ref_names = [n for n, _ in placed]
+    graph = comfy_backend.build_graph(scene, script, overlap_clip=name, refs=ref_names)
+    # Every host file the graph reads, content-hashed: the anchor clip and each
+    # reference image. Swapping an anchor must invalidate the scenes using it.
+    inputs = ([host] if host is not None else []) + [p for _, p in placed]
     return SceneJob(
         scene=scene,
-        refs=(),
+        refs=tuple(scene.ref_images),
         ref_video_dirs=(),
-        fingerprint=comfy_backend.fingerprint(scene, script, inputs, overlap_clip=name),
+        fingerprint=comfy_backend.fingerprint(
+            scene, script, inputs, overlap_clip=name, refs=ref_names),
         graph=graph,
         overlap_clip=name,
         overlap_frames=frames,

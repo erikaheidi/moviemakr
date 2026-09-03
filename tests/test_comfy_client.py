@@ -20,7 +20,15 @@ from moviemakr.errors import ConfigError
 PROMPT_ID = "1e1c0b7a-0000-4000-8000-000000000000"
 
 
-def history(status="success", completed=True, outputs=None, messages=None):
+def history(status="success", completed=None, outputs=None, messages=None):
+    """A /history entry shaped like the real server's.
+
+    `completed` mirrors ComfyUI: true on success, **false on error**. Faking it
+    true for failures is what hid a hang - is_finished waited on that flag, so a
+    failed prompt was never seen to finish.
+    """
+    if completed is None:
+        completed = status == "success"
     return {PROMPT_ID: {
         "status": {"status_str": status, "completed": completed,
                    "messages": messages or []},
@@ -121,14 +129,27 @@ def test_a_rejected_graph_surfaces_its_node_errors(monkeypatch):
 
 def object_info(unet=("a.safetensors",), clip=("t.safetensors",),
                 vae=("v.safetensors", "av.safetensors"), lora=("l.safetensors",)):
+    """A server that has the models the script names."""
     def node(field, options):
         return {"input": {"required": {field: [list(options), {}]}}}
+
     return {
         "UNETLoader": node("unet_name", unet),
         "CLIPLoader": node("clip_name", clip),
         "VAELoader": node("vae_name", vae),
         "LoraLoaderModelOnly": node("lora_name", lora),
     }
+
+
+@pytest.fixture
+def only_model_check(monkeypatch):
+    """Isolate check_server's model-presence half.
+
+    It also validates a graph's shape against the schema, which needs a complete
+    declaration of every node. That half is covered precisely in
+    test_comfy_refs.py; mixing both here would only test the fixture.
+    """
+    monkeypatch.setattr(comfy, "validate_graph", lambda graph, info: [])
 
 
 @pytest.fixture
@@ -142,7 +163,7 @@ def comfy_models():
 
 
 def test_preflight_passes_when_the_server_has_the_models(
-        monkeypatch, load_comfy, comfy_models):
+        monkeypatch, load_comfy, comfy_models, only_model_check):
     script = load_comfy({"comfy": comfy_models})
     monkeypatch.setattr(comfy, "get_json", lambda url, timeout=None: object_info())
     ok, message = comfy.check_server(script)
@@ -150,7 +171,7 @@ def test_preflight_passes_when_the_server_has_the_models(
 
 
 def test_preflight_names_the_model_the_server_lacks(
-        monkeypatch, load_comfy, comfy_models):
+        monkeypatch, load_comfy, comfy_models, only_model_check):
     script = load_comfy({"comfy": comfy_models})
     monkeypatch.setattr(
         comfy, "get_json",
@@ -316,3 +337,33 @@ def test_a_transient_poll_error_does_not_fail_the_render(monkeypatch, load_comfy
 
     assert run_with(monkeypatch, load_comfy, tmp_path, get=flaky) == 0
     assert calls["n"] == 2
+
+
+def test_a_failed_prompt_counts_as_finished():
+    """ComfyUI sets completed=false on error. Waiting on that flag hangs forever
+    on exactly the failures the retry loop exists to handle, and the
+    vanished-prompt guard cannot help because the entry is present."""
+    entry = comfy.history_entry(history(status="error"), PROMPT_ID)
+    assert entry["status"]["completed"] is False
+    assert comfy.is_finished(entry)
+    assert comfy.failure_reason(entry) is not None
+
+
+def test_a_still_running_prompt_is_not_finished():
+    """No entry at all is the normal state while rendering."""
+    assert not comfy.is_finished(None)
+    assert not comfy.is_finished({})
+
+
+def test_preflight_rejects_a_graph_the_server_would_not_run(
+        monkeypatch, load_comfy, comfy_models):
+    """check_server checks shape as well as model presence: /prompt's own
+    validation accepts graphs that then raise inside execute()."""
+    script = load_comfy({"comfy": comfy_models})
+    monkeypatch.setattr(comfy, "get_json", lambda url, timeout=None: object_info())
+    monkeypatch.setattr(comfy, "validate_graph",
+                        lambda graph, info: ["cond (X): unknown input 'ref_image_1'"])
+    ok, message = comfy.check_server(script)
+    assert not ok
+    assert "does not match this server's schema" in message
+    assert "ref_image_1" in message

@@ -31,8 +31,11 @@ COMFY_KEYS = frozenset({
     "url", "input_dir", "output_dir",
     "diffusion_model", "text_encoder", "video_vae", "audio_vae",
     "lora", "lora_strength", "steps", "sampler", "scheduler",
-    "shift_video", "shift_audio",
+    "shift_video", "shift_audio", "ref_image_size",
 })
+REF_IMAGE_SIZES = ("match", "max")
+# MiniMaxH3ReferenceToVideo's autogrow ref_image_N inputs stop at 9.
+MAX_COMFY_REFS = 9
 COMFY_REQUIRED = ("diffusion_model", "text_encoder", "video_vae", "audio_vae")
 CONTINUITY_KEYS = frozenset({"anchors", "anchor_videos", "chain_from_previous"})
 OUTPUT_KEYS = frozenset({"container", "audio", "music", "music_gain_db"})
@@ -77,6 +80,25 @@ def _positive_int(key: str, value: Any, where: str) -> int:
 
 def _opt_positive_int(key: str, value: Any, where: str) -> int | None:
     return None if value is None else _positive_int(key, value, where)
+
+
+CANVAS_GRID = 32
+
+
+def align_canvas(size: int) -> int:
+    """Round a frame dimension up onto the model's 32-pixel canvas grid.
+
+    Applied at load time for the comfy backend so that the settings, the graph,
+    the assembly spec and `status` all carry the same number. Snapping only
+    inside the graph builder used to leave assembly normalizing a 544-wide clip
+    back down to the script's literal 540 - a resample of every frame, for
+    nothing. sd-cli already rounds the same way, so a ported script lands on the
+    same canvas on both backends.
+    """
+    n = max(CANVAS_GRID, int(size))
+    if n % CANVAS_GRID:
+        n += CANVAS_GRID - (n % CANVAS_GRID)
+    return n
 
 
 def _non_negative_int(key: str, value: Any, where: str) -> int:
@@ -225,6 +247,10 @@ class ComfyConfig:
     scheduler: str
     shift_video: float
     shift_audio: float
+    # "match" scales each reference to the generation's pixel area; "max" uses a
+    # 2048px short edge for better identity fidelity. Reference tokens ride
+    # through every sampling step, so "max" can be several times slower.
+    ref_image_size: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,6 +314,13 @@ def _as_dict(raw: Any, key: str) -> dict:
     if not isinstance(value, dict):
         raise ConfigError(f"{key}: must be a mapping, got {value!r}")
     return value
+
+
+def _one_of(value: Any, allowed: tuple[str, ...], what: str) -> str:
+    text = str(value)
+    if text not in allowed:
+        raise ConfigError(f"{what} must be one of {', '.join(allowed)}, got {value!r}")
+    return text
 
 
 def _opt_dir(value: Any, what: str) -> Path | None:
@@ -416,6 +449,8 @@ def load_script(script_path: Path, workspace: Workspace) -> Script:
             scheduler=str(comfy_raw.get("scheduler") or DEFAULT_COMFY_SCHEDULER),
             shift_video=_float("shift_video", comfy_raw.get("shift_video", DEFAULT_SHIFT_VIDEO), "comfy"),
             shift_audio=_float("shift_audio", comfy_raw.get("shift_audio", DEFAULT_SHIFT_AUDIO), "comfy"),
+            ref_image_size=_one_of(
+                comfy_raw.get("ref_image_size", "match"), REF_IMAGE_SIZES, "comfy.ref_image_size"),
         )
 
     # --- output ---
@@ -485,6 +520,12 @@ def load_script(script_path: Path, workspace: Workspace) -> Script:
         check_keys(where, rs, allowed_scene_keys)
         overrides = {k: v for k, v in rs.items() if k not in SCENE_KEYS}
         settings = script_defaults.merge(overrides, where)
+        if backend == "comfy":
+            settings = dataclasses.replace(
+                settings,
+                width=align_canvas(settings.width),
+                height=align_canvas(settings.height),
+            )
 
         refs = list(anchor_paths)
         for rel in rs.get("ref_images") or []:
@@ -494,15 +535,19 @@ def load_script(script_path: Path, workspace: Workspace) -> Script:
         for rel in rs.get("ref_videos") or []:
             ref_videos.append(_resolve_file(rel, f"{where} ref_video", assets_dir))
 
-        # Reference conditioning is a different ComfyUI node (ReferenceToVideo,
-        # with autogrow ref_image_N inputs) driven by a different checkpoint.
-        # Silently dropping the refs would render a whole script without the
-        # anchors that hold a character together, so refuse instead.
-        if backend == "comfy" and (refs or ref_videos):
+        # Reference *videos* would need the node's ref_video_N inputs plus their
+        # index-paired soundtracks. Not wired up, and silently dropping them
+        # would quietly change what the scene is conditioned on.
+        if backend == "comfy" and ref_videos:
             raise ConfigError(
-                f"{where}: the comfy backend does not support ref_images or "
-                f"ref_videos yet - it renders through MiniMaxH3ImageToVideo.\n"
-                f"  Remove them (and continuity.anchors) or use backend: sdcpp."
+                f"{where}: the comfy backend does not support ref_videos yet.\n"
+                f"  Remove them (and continuity.anchor_videos), or use backend: sdcpp."
+            )
+        if backend == "comfy" and len(refs) > MAX_COMFY_REFS:
+            raise ConfigError(
+                f"{where}: {len(refs)} reference images, but MiniMaxH3ReferenceToVideo "
+                f"accepts at most {MAX_COMFY_REFS}.\n"
+                f"  continuity.anchors are counted too - they come first."
             )
 
         scenes.append(

@@ -31,10 +31,13 @@ def _current_fingerprint(scene, script: Script, prev_chain: Path | None):
     """
     layout = script.layout
     if script.backend == "comfy":
-        # Names only: this must not cut a tail clip just to answer `status`.
+        # Names only: this must neither cut a tail clip nor copy reference images
+        # just to answer `status`.
         name, host, _ = comfy_backend.prepare_chain(scene, script, prev_chain, dry_run=True)
+        placed = comfy_backend.prepare_refs(script, scene.ref_images, dry_run=True)
+        inputs = ([host] if host is not None else []) + [p for _, p in placed]
         return comfy_backend.fingerprint(
-            scene, script, [host] if host is not None else [], overlap_clip=name
+            scene, script, inputs, overlap_clip=name, refs=[n for n, _ in placed]
         )
     refs, _ = resolve_refs(scene, prev_chain, dry_run=False)
     dirs = [
