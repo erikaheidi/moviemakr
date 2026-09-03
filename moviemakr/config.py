@@ -177,7 +177,13 @@ class SceneSettings:
     # comfy backend only. Frames of the previous scene - video *and* its audio -
     # anchored at the head of this one, then trimmed back off at assembly. 0 is a
     # hard cut. sd-cli has no equivalent, so the sdcpp backend ignores it.
-    overlap_frames: int = 22
+    #
+    # 5, the shortest length on the model's grid, because the anchor's keyframe
+    # latents ride through *every* sampling step exactly like reference tokens.
+    # Measured on the same scene at 544x960x90: no anchor 84.2s/step, 5 frames
+    # 93.8s/step (+11%), 22 frames 137.8s/step (+64%) - a 22-frame anchor doubled
+    # the scene for 0.9s of shared motion against 0.2s. The short seam held up.
+    overlap_frames: int = 5
 
     FIELDS: ClassVar[frozenset[str]] = frozenset(_COERCERS)
 

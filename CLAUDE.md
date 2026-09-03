@@ -358,9 +358,37 @@ Measured on gfx1151 at 544x960, 90 frames, no turbo LoRA:
 Step count is *not* cheap at full size: at 640x384x56 a step costs 8.8s, at
 544x960x90 it costs 74s. Quality was judged acceptable at 14 steps.
 
-Two things remain untested: more than two consecutive scenes in one run (the
-memory fault that forced `--cache-ram` is a long-run risk), and lengths beyond 90
-frames, where the model's own trained range actually begins.
+A three-scene film has since run end to end twice, 544x960x90 at 14 steps:
+87m34s with a 22-frame overlap, 75m58s with a 5-frame one. No fault, no retry, no
+intervention; `--cache-ram 24 96` held across three consecutive scenes with
+`full avg10` flat at 0.00.
+
+**Everything that rides through every sampling step is what costs.** Measured on
+the same scene:
+
+| | s/step |
+| --- | --- |
+| no anchor | 84.2 |
+| 5-frame anchor | 93.8 (+11%) |
+| 22-frame anchor | 137.8 (+64%) |
+
+The anchor's keyframe latents are re-injected at every step exactly like
+reference tokens, so a 22-frame overlap nearly doubles a scene - and it keeps 17
+fewer frames after the trim. Hence the default of 5: it bought a seam that was
+judged indistinguishable, for a ninth of the cost.
+
+**Reference image size is not a cost lever.** Cutting the reference from 964x1280
+to 640x850 (56% fewer pixels) moved per-step cost by 0.3% - 84.1 to 84.3 s/step -
+and did not move CPU text-encode time either (5m25s vs 5m41s). Do not resize
+references hoping for speed.
+
+**Prompt length is the one untested lever**, and it plausibly dominates both
+phases: the six-section Ref2VA format runs ~500 words, and CPU encoding of it
+costs 5-6 minutes a scene before sampling even starts. It is also what fixes
+identity, so shortening it trades against the thing it was written for.
+
+Still untested: lengths beyond 90 frames, where the model's own trained range
+actually begins.
 
 ### GPU / container gotchas (don't "simplify" these away)
 
