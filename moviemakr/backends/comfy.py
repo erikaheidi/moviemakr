@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import signal
 import sys
 import time
 import urllib.error
@@ -480,6 +481,31 @@ def pairing_warnings(script: Script) -> list[str]:
             out.append(f"{comfy.lora} is a ref2v LoRA on an fl2va model.")
         if "fl2v" in lora and "ref2va" in model:
             out.append(f"{comfy.lora} is an fl2v LoRA on a ref2va model.")
+
+    # Settings that mean something to sd-cli and nothing here. A ported script
+    # carries them unchanged, and a key that is silently inert is exactly what
+    # `check_keys` exists to prevent - it just cannot see this, because the keys
+    # are valid, only inert on this backend.
+    inert: list[str] = []
+    for scene in script.scenes:
+        st = scene.settings
+        if st.cfg_scale != 1.0 and "cfg_scale" not in inert:
+            # H3 has no negative conditioning: ComfyUI drives it through
+            # BasicGuider, which takes no CFG at all.
+            inert.append("cfg_scale")
+        if st.negative_prompt.strip() and "negative_prompt" not in inert:
+            inert.append("negative_prompt")
+        if st.sampling_method and "sampling_method" not in inert:
+            inert.append("sampling_method")
+        if st.extra_args and "extra_args" not in inert:
+            inert.append("extra_args")
+    if inert:
+        out.append(
+            f"these settings do nothing on the comfy backend and are ignored: "
+            f"{', '.join(inert)}"
+            + ("\n  sampling_method is sdcpp's; set comfy.sampler instead."
+               if "sampling_method" in inert else "")
+        )
     return out
 
 
@@ -709,6 +735,41 @@ def collect(entry: dict, dest: Path, comfy) -> bool:
     return dest.is_file() and dest.stat().st_size > 0
 
 
+class _TermAsInterrupt:
+    """Make SIGTERM take the KeyboardInterrupt path while a prompt is in flight.
+
+    `docker run` is a client whose death the daemon notices; an HTTP POST is not.
+    A killed moviemakr leaves ComfyUI sampling a prompt nobody will collect - it
+    holds the GPU for the rest of the run and the next attempt queues behind it.
+    Ctrl-C already routed through `interrupt`; SIGTERM did not, which is how a
+    timed-out wrapper orphaned a 25-minute render.
+
+    Restores the previous handler on the way out, and does nothing at all off the
+    main thread, where `signal.signal` is not allowed.
+    """
+
+    def __enter__(self):
+        self._prev = None
+        try:
+            self._prev = signal.getsignal(signal.SIGTERM)
+            signal.signal(signal.SIGTERM, self._raise)
+        except (ValueError, OSError):  # not the main thread
+            self._prev = None
+        return self
+
+    @staticmethod
+    def _raise(_signum, _frame):
+        raise KeyboardInterrupt
+
+    def __exit__(self, *_exc):
+        if self._prev is not None:
+            try:
+                signal.signal(signal.SIGTERM, self._prev)
+            except (ValueError, OSError):
+                pass
+        return False
+
+
 def run_scene(graph: dict, script: Script, dest: Path, log_path: Path, *,
               label: str = "") -> int:
     """Submit one graph and wait for it. Returns a shell-style exit code.
@@ -722,7 +783,7 @@ def run_scene(graph: dict, script: Script, dest: Path, log_path: Path, *,
     client_id = uuid.uuid4().hex
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("w") as log:
+    with _TermAsInterrupt(), log_path.open("w") as log:
         log.write(f"POST {comfy.url}/prompt  prompt_id={prompt_id}\n\n")
         log.write(format_graph(graph) + "\n\n")
         log.flush()

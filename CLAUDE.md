@@ -72,7 +72,7 @@ midpoints, never the first or last frame, which are the blurriest.
 ### Tests
 
 ```bash
-.venv/bin/python -m pytest          # ~535 tests, under a second
+.venv/bin/python -m pytest          # ~575 tests, under a second
 ```
 
 The suite is hermetic — no Docker, GPU, or ffmpeg. That works because `sd_args`
@@ -311,6 +311,56 @@ overlap instead of trimming it is the obvious next lever if that ever matters.
 - **Collection prefers a file copy** over `/view`: a local ComfyUI shares its
   output directory, and pushing hundreds of MB through HTTP for no reason is
   slower and can time out. The HTTP path stays as the remote-server fallback.
+- **Autogrow inputs are one nested input, not flat keys.** `ref_image_1` at the
+  top level of a node's inputs reaches `execute()` as an unexpected kwarg and
+  raises there. The shape is `{"ref_images": {"ref_image_1": [node, 0]}}`. And
+  `/prompt` *validates* the flat form happily - it only fails at execution, so a
+  graph that passes validation is not a graph that runs.
+- **SIGTERM is bridged to `KeyboardInterrupt`** while a prompt is in flight
+  (`_TermAsInterrupt`). `docker run` is a client whose death the daemon notices;
+  an HTTP POST is not. A killed moviemakr otherwise leaves ComfyUI sampling a
+  prompt nobody will collect, holding the GPU for the rest of the run.
+- **`cfg_scale`, `negative_prompt`, `sampling_method` and `extra_args` are inert
+  here** and `pairing_warnings` says so at dry-run. H3 has no negative
+  conditioning at CFG 1, so ComfyUI drives it through `BasicGuider`; the rest are
+  sd-cli's. `check_keys` cannot catch these because the keys are valid - just
+  inert on this backend.
+
+### Porting a chained script from sdcpp to comfy
+
+**`<Picture N>` shifts by one.** On sdcpp the chained last frame is inserted at
+ref index 0, so anchors start at `<Picture 2>`. On comfy chaining is the overlap
+anchor - an in-timeline keyframe, not a reference - so anchors start at
+`<Picture 1>`.
+
+A prompt written for sdcpp and ported unchanged therefore misnumbers every
+reference it cites. `<workspace>/scripts/h3/josy-beach-drive.yaml` cites both
+`<Picture 1>` and `<Picture 2>` throughout, and porting it would need each
+decremented by one.
+
+Two other things a port has to change:
+
+- `model:` and `docker:` are rejected for `backend: comfy` - the model names move
+  under `comfy:`, and they are ComfyUI-side *names*, not host paths.
+- `ref_videos` and `continuity.anchor_videos` are not supported yet; they need the
+  node's `ref_video_N` inputs plus index-paired soundtracks. Rejected at load.
+
+### What has actually been run on the comfy backend
+
+Measured on gfx1151 at 544x960, 90 frames, no turbo LoRA:
+
+| | |
+| --- | --- |
+| one scene, 20 steps | 25m18s (74s per sampling step) |
+| one scene, 14 steps | 17m49s (73.5s per step - linear in steps) |
+| the sd-cli equivalent | roughly 50 minutes |
+
+Step count is *not* cheap at full size: at 640x384x56 a step costs 8.8s, at
+544x960x90 it costs 74s. Quality was judged acceptable at 14 steps.
+
+Two things remain untested: more than two consecutive scenes in one run (the
+memory fault that forced `--cache-ram` is a long-run risk), and lengths beyond 90
+frames, where the model's own trained range actually begins.
 
 ### GPU / container gotchas (don't "simplify" these away)
 

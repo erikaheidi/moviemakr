@@ -367,3 +367,27 @@ def test_preflight_rejects_a_graph_the_server_would_not_run(
     assert not ok
     assert "does not match this server's schema" in message
     assert "ref_image_1" in message
+
+
+# --- SIGTERM must not orphan a prompt ------------------------------------
+
+
+def test_term_as_interrupt_restores_the_previous_handler():
+    import signal
+
+    from moviemakr.backends.comfy import _TermAsInterrupt
+
+    before = signal.getsignal(signal.SIGTERM)
+    with _TermAsInterrupt():
+        assert signal.getsignal(signal.SIGTERM) is not before
+    assert signal.getsignal(signal.SIGTERM) is before
+
+
+def test_term_as_interrupt_raises_keyboardinterrupt():
+    """SIGTERM has to take the same path Ctrl-C does, or ComfyUI keeps sampling."""
+    import signal
+
+    from moviemakr.backends.comfy import _TermAsInterrupt
+
+    with pytest.raises(KeyboardInterrupt), _TermAsInterrupt():
+        signal.raise_signal(signal.SIGTERM)
