@@ -10,8 +10,8 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .assemble import assemble
+from .backends.sdcpp import format_argv
 from .config import Script, load_script
-from .docker import format_argv
 from .errors import ConfigError
 from .layout import WORKSPACE_ENV, Workspace
 from .media import extract_still, probe_clip, still_timestamps
@@ -19,10 +19,11 @@ from .render import RenderOptions, render
 from .report import print_summary
 from .status import scene_rows
 
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="moviemakr",
-        description="Render a multi-scene movie script with stable-diffusion.cpp.",
+        description="Render a multi-scene movie from a YAML script, one scene at a time.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -69,7 +70,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve = sub.add_parser("serve", parents=[common],
                              help="browse the workspace over HTTP")
     p_serve.add_argument("--host", default="127.0.0.1",
-                         help="bind address (default 127.0.0.1; use 0.0.0.0 behind tailscale serve)")
+                         help="bind address (default 127.0.0.1; "
+                              "use 0.0.0.0 behind tailscale serve)")
     p_serve.add_argument("--port", type=int, default=8765)
     p_serve.add_argument("--reload", action="store_true", help="auto-reload on code changes")
 

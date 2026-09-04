@@ -64,8 +64,8 @@ def test_no_import_cycles():
     """Every module must import cleanly on its own, in any order."""
     modules = [
         "moviemakr.errors", "moviemakr.layout", "moviemakr.report", "moviemakr.state",
-        "moviemakr.media", "moviemakr.config", "moviemakr.docker", "moviemakr.assemble",
-        "moviemakr.render", "moviemakr.cli",
+        "moviemakr.media", "moviemakr.config", "moviemakr.backends.sdcpp",
+        "moviemakr.assemble", "moviemakr.render", "moviemakr.cli",
     ]
     for module in modules:
         proc = subprocess.run(

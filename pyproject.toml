@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "moviemakr"
 version = "0.2.0"
-description = "Render a multi-scene movie from a YAML script with stable-diffusion.cpp in Docker."
+description = "Render a multi-scene movie from a YAML script with MiniMax-H3, via stable-diffusion.cpp or ComfyUI."
 requires-python = ">=3.11"
 dependencies = ["PyYAML>=6"]
 
@@ -21,7 +21,9 @@ web = [
   "jinja2>=3.1",
   "python-multipart>=0.0.9",
 ]
-dev = ["pytest>=8", "httpx>=0.27"]
+# ruff is pinned by uv.lock, not just floored here: an unpinned linter turns a
+# new upstream release into a red build on a commit that changed nothing.
+dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.16"]
 
 [project.scripts]
 moviemakr = "moviemakr.cli:main"

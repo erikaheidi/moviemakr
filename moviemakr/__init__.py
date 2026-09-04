@@ -1,7 +1,9 @@
-"""moviemakr - render a multi-scene movie script with stable-diffusion.cpp in Docker.
+"""moviemakr - render a multi-scene movie script with MiniMax-H3.
 
-Each scene is one `docker run` of sd-cli in vid_gen mode. Scenes are rendered in
-order, resumed via fingerprint, retried on failure, then assembled with ffmpeg.
+A scene is rendered by whichever engine the script's `backend:` names: one
+`docker run` of sd-cli in vid_gen mode, or an API graph submitted to a running
+ComfyUI. Scenes are rendered in order, resumed via fingerprint, retried on
+failure, then assembled with ffmpeg.
 
 The names re-exported here are the stable surface: they keep working when the
 implementation moves between submodules.
@@ -10,15 +12,7 @@ implementation moves between submodules.
 from __future__ import annotations
 
 from .assemble import assemble
-from .config import (
-    DockerConfig,
-    OutputConfig,
-    Scene,
-    SceneSettings,
-    Script,
-    load_script,
-)
-from .docker import (
+from .backends.sdcpp import (
     check_gpu,
     container_name,
     device_gids,
@@ -27,6 +21,14 @@ from .docker import (
     format_argv,
     kill_container,
     sd_args,
+)
+from .config import (
+    DockerConfig,
+    OutputConfig,
+    Scene,
+    SceneSettings,
+    Script,
+    load_script,
 )
 from .errors import ConfigError, check_keys, suggest
 from .layout import RunLayout, Workspace, slugify

@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import Any
 
 from .assemble import assemble
-from .config import Scene, Script
-from .docker import (
+from .backends import comfy as comfy_backend
+from .backends.sdcpp import (
     check_gpu,
     container_name,
     docker_argv,
@@ -27,6 +27,7 @@ from .docker import (
     format_argv,
     run_scene,
 )
+from .config import Scene, Script
 from .errors import ConfigError
 from .media import extract_last_frame, prepare_ref_video, probe_clip
 from .report import fmt_duration, print_summary
@@ -49,7 +50,7 @@ class RenderOptions:
     allow_cpu: bool = False
 
     @classmethod
-    def from_args(cls, args: argparse.Namespace) -> "RenderOptions":
+    def from_args(cls, args: argparse.Namespace) -> RenderOptions:
         return cls(
             only=args.only,
             scene=args.scene,
@@ -74,6 +75,11 @@ class SceneJob:
     refs: tuple[Path, ...]
     ref_video_dirs: tuple[Path, ...]
     fingerprint: str
+    # comfy only: the API graph, the anchor clip's name inside ComfyUI's input
+    # dir, and how many frames it actually anchors (already snapped to the grid).
+    graph: dict | None = None
+    overlap_clip: str | None = None
+    overlap_frames: int = 0
 
 
 # --------------------------------------------------------------------------
@@ -166,14 +172,33 @@ def is_up_to_date(clip: Path, entry: Mapping[str, Any], fp: str, *, force: bool)
 
 
 def preflight(script: Script, opts: RenderOptions) -> int | None:
-    """None to proceed; an exit code to return instead."""
-    if opts.dry_run or opts.allow_cpu:
-        return None
-    ok, message = check_gpu(script)
+    """None to proceed; an exit code to return instead.
+
+    Both backends answer the same question - "will this actually render?" - but
+    from different evidence: sdcpp asks the container which compute backends it
+    can see, comfy asks the server whether it holds the named models.
+    """
+    if script.backend == "comfy":
+        # Pure and offline, so it runs on a dry run too - a mismatched checkpoint
+        # is exactly what a dry run is for catching. It warns, never blocks.
+        for warning in comfy_backend.pairing_warnings(script):
+            print(f"warning: {warning}", file=sys.stderr)
+
+    if opts.dry_run:
+        return None  # a dry run must stay free, and must work with nothing running
+
+    if script.backend == "comfy":
+        ok, message = comfy_backend.check_server(script)
+        hint = "  Start ComfyUI, or fix the model names under comfy:."
+    else:
+        if opts.allow_cpu:
+            return None
+        ok, message = check_gpu(script)
+        hint = "  Pass --allow-cpu to render anyway."
     print(f"{'' if ok else 'error: '}{message}", file=sys.stdout if ok else sys.stderr)
     if ok:
         return None
-    print("  Pass --allow-cpu to render anyway.", file=sys.stderr)
+    print(hint, file=sys.stderr)
     return 2
 
 
@@ -184,6 +209,9 @@ def build_job(scene: Scene, script: Script, prev_frame: Path | None, *,
     A dry run only needs the frame directory *path* to print an accurate command,
     so it must not transcode anything.
     """
+    if script.backend == "comfy":
+        return build_comfy_job(scene, script, prev_frame, dry_run=dry_run)
+
     refs, warning = resolve_refs(scene, prev_frame, dry_run=dry_run)
     if warning:
         print(warning, file=sys.stderr)
@@ -204,14 +232,55 @@ def build_job(scene: Scene, script: Script, prev_frame: Path | None, *,
     )
 
 
+def chain_artefact(scene: Scene, script: Script, *, refresh: bool = False,
+                   dry_run: bool = False) -> Path | None:
+    """What this scene hands to the next one to chain from.
+
+    sdcpp chains on a still, so the artefact is an extracted PNG. comfy chains on
+    a segment, so it is the clip itself and the tail is cut later. A dry run
+    returns the clip path even when nothing has been rendered, so the plan can
+    show what *would* be anchored.
+    """
+    if script.backend == "comfy":
+        clip = script.layout.clip(scene.slug)
+        return clip if (dry_run or clip.is_file()) else None
+    return chain_frame(scene, script, refresh=refresh)
+
+
+def build_comfy_job(scene: Scene, script: Script, prev_clip: Path | None, *,
+                    dry_run: bool) -> SceneJob:
+    """Resolve the anchor clip and build the graph, then fingerprint it.
+
+    `prev_clip` is the previous scene's rendered clip, not a still: the comfy
+    backend chains on a segment, so the artefact handed forward is the clip
+    itself and the tail is cut from it here.
+    """
+    name, host, frames = comfy_backend.prepare_chain(scene, script, prev_clip, dry_run=dry_run)
+    placed = comfy_backend.prepare_refs(script, scene.ref_images, dry_run=dry_run)
+    ref_names = [n for n, _ in placed]
+    graph = comfy_backend.build_graph(scene, script, overlap_clip=name, refs=ref_names)
+    # Every host file the graph reads, content-hashed: the anchor clip and each
+    # reference image. Swapping an anchor must invalidate the scenes using it.
+    inputs = ([host] if host is not None else []) + [p for _, p in placed]
+    return SceneJob(
+        scene=scene,
+        refs=tuple(scene.ref_images),
+        ref_video_dirs=(),
+        fingerprint=comfy_backend.fingerprint(
+            scene, script, inputs, overlap_clip=name, refs=ref_names),
+        graph=graph,
+        overlap_clip=name,
+        overlap_frames=frames,
+    )
+
+
 def chain_frame(scene: Scene, script: Script, *, refresh: bool = False) -> Path | None:
     """Ensure the scene's last frame exists on disk, and return it if it does."""
     layout = script.layout
     frame = layout.frame(scene.slug)
     clip = layout.clip(scene.slug)
-    if refresh or (not frame.is_file() and clip.is_file()):
-        if clip.is_file():
-            extract_last_frame(clip, frame)
+    if clip.is_file() and (refresh or not frame.is_file()):
+        extract_last_frame(clip, frame)
     return frame if frame.is_file() else None
 
 
@@ -225,7 +294,8 @@ def attempt_scene(job: SceneJob, script: Script, *, attempts: int,
     scene = job.scene
     layout = script.layout
     clip = layout.clip(scene.slug)
-    argv = docker_argv(scene, script, job.refs, job.ref_video_dirs)
+    is_comfy = script.backend == "comfy"
+    argv = None if is_comfy else docker_argv(scene, script, job.refs, job.ref_video_dirs)
 
     elapsed = 0.0
     code = -1
@@ -233,12 +303,19 @@ def attempt_scene(job: SceneJob, script: Script, *, attempts: int,
         label = f"attempt {attempt}/{attempts}" if attempts > 1 else "rendering"
         print(f"\n=== [{scene.index}/{total}] {scene.slug}: {label} ===")
         print(f"    {scene.full_prompt()[:100]}")
+        if job.overlap_frames:
+            print(f"    anchored on {job.overlap_frames} frames of the previous scene")
         if clip.exists():
             clip.unlink()
 
         log_path = layout.log(scene.slug, attempt)
         start = time.time()
-        code = run_scene(argv, log_path, container_name(scene, script))
+        if is_comfy:
+            assert job.graph is not None
+            code = comfy_backend.run_scene(job.graph, script, clip, log_path,
+                                           label=f"[{scene.index}/{total}] ")
+        else:
+            code = run_scene(argv, log_path, container_name(scene, script))
         elapsed = time.time() - start
 
         if code == 0 and clip.is_file() and clip.stat().st_size > 0:
@@ -254,7 +331,7 @@ def attempt_scene(job: SceneJob, script: Script, *, attempts: int,
 
 def record_success(state: dict, job: SceneJob, clip: Path, probe: dict,
                    elapsed: float) -> None:
-    state["scenes"][job.scene.id] = {
+    entry = {
         "fingerprint": job.fingerprint,
         "state": "rendered",
         "clip": str(clip),
@@ -262,6 +339,11 @@ def record_success(state: dict, job: SceneJob, clip: Path, probe: dict,
         "elapsed": elapsed,
         "rendered_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
+    if job.overlap_frames:
+        # Recorded because assembly has to trim exactly what was anchored here,
+        # even if the script's overlap_frames is edited afterwards.
+        entry["overlap_frames"] = job.overlap_frames
+    state["scenes"][job.scene.id] = entry
 
 
 def finish(script: Script, opts: RenderOptions, results: list[dict], failed: bool) -> int:
@@ -305,17 +387,17 @@ def render(script: Script, opts: RenderOptions) -> int:
     total = len(script.scenes)
 
     results: list[dict] = []
-    prev_frame: Path | None = None
+    prev_chain: Path | None = None
     failed = False
 
     for scene in script.scenes:
-        # Scenes outside the selection still contribute their last frame to the
-        # chain, so a filtered run does not break continuity downstream.
+        # Scenes outside the selection still contribute their chain artefact, so
+        # a filtered run does not break continuity downstream.
         if scene.index not in selected:
-            prev_frame = chain_frame(scene, script)
+            prev_chain = chain_artefact(scene, script, dry_run=opts.dry_run)
             continue
 
-        job = build_job(scene, script, prev_frame, dry_run=opts.dry_run)
+        job = build_job(scene, script, prev_chain, dry_run=opts.dry_run)
         clip = layout.clip(scene.slug)
         up_to_date = is_up_to_date(
             clip, scene_entry(state, scene.id), job.fingerprint, force=opts.force
@@ -324,9 +406,15 @@ def render(script: Script, opts: RenderOptions) -> int:
         if opts.dry_run:
             print(f"\n=== [{scene.index}/{total}] {scene.slug} "
                   f"({'skip' if up_to_date else 'render'}) ===")
-            print(format_argv(docker_argv(scene, script, job.refs, job.ref_video_dirs)))
+            if job.graph is not None:
+                if job.overlap_frames:
+                    print(f"# anchored on {job.overlap_frames} frames of "
+                          f"{job.overlap_clip}")
+                print(comfy_backend.format_graph(job.graph))
+            else:
+                print(format_argv(docker_argv(scene, script, job.refs, job.ref_video_dirs)))
             results.append({"scene": scene, "state": "dry-run", "probe": {}, "elapsed": None})
-            prev_frame = layout.frame(scene.slug)
+            prev_chain = chain_artefact(scene, script, dry_run=True)
             continue
 
         if up_to_date:
@@ -338,7 +426,7 @@ def render(script: Script, opts: RenderOptions) -> int:
                 "probe": entry.get("probe") or probe_clip(clip),
                 "elapsed": entry.get("elapsed"),
             })
-            prev_frame = chain_frame(scene, script)
+            prev_chain = chain_artefact(scene, script)
             continue
 
         try:
@@ -358,7 +446,7 @@ def render(script: Script, opts: RenderOptions) -> int:
             if opts.halt_on_failure:
                 print("\nhalting: --halt-on-failure is set", file=sys.stderr)
                 break
-            prev_frame = None
+            prev_chain = None
             continue
 
         probe = probe_clip(clip)
@@ -367,7 +455,7 @@ def render(script: Script, opts: RenderOptions) -> int:
         results.append({"scene": scene, "state": "rendered", "probe": probe, "elapsed": elapsed})
         print(f"  -> {clip.name}  {probe.get('frames')} frames  "
               f"{fmt_duration(probe.get('duration'))}  (took {fmt_duration(elapsed)})")
-        prev_frame = chain_frame(scene, script, refresh=True)
+        prev_chain = chain_artefact(scene, script, refresh=True)
 
     if opts.dry_run:
         return 0

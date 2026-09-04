@@ -1,0 +1,81 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# A new push to the same branch supersedes the run already in flight.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor is pyproject's requires-python; the ceiling is what the
+        # project is developed against.
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # uv, to match the local .venv and because it fetches interpreters itself.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      # --locked fails the run if uv.lock has drifted from pyproject.toml, so a
+      # forgotten `uv lock` is caught here rather than by a resolution that
+      # quietly differs from everyone else's.
+      - name: Install the locked environment
+        run: uv sync --locked --python ${{ matrix.python-version }} --extra web --extra dev
+
+      - name: Run the suite
+        run: .venv/bin/pytest
+
+  core-only:
+    # pyproject is explicit that the core CLI must keep working with no web
+    # extra installed, and the suite skips its FastAPI tests when it is absent.
+    # Without this job nothing would notice an import of fastapi leaking out of
+    # moviemakr/web/app.py, the one module allowed to have one.
+    name: pytest (no web extra)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      # dev brings pytest; web is deliberately left out. `uv sync` prunes, so
+      # fastapi is genuinely absent rather than merely unrequested.
+      - name: Install without the web extra
+        run: uv sync --locked --python 3.11 --extra dev
+
+      - name: Run the suite
+        run: .venv/bin/pytest
+
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      # ruff comes from the dev extra, so uv.lock pins the exact version and a
+      # new upstream release cannot redden a build on its own.
+      - name: Install the locked environment
+        run: uv sync --locked --python 3.11 --extra dev
+
+      - name: Lint
+        run: .venv/bin/ruff check --output-format=github .

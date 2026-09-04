@@ -9,6 +9,7 @@ container-side paths and never the tmp_path a test happens to run in.
 from __future__ import annotations
 
 import copy
+import os
 import sys
 from pathlib import Path
 
@@ -67,6 +68,35 @@ def model_root(tmp_path: Path) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"")
     return root
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _stub_media_tools(tmp_path_factory):
+    """Fake ffmpeg/ffprobe on PATH for the whole session.
+
+    The suite is hermetic, but `test_package.py` spawns the real CLI, and
+    `check_tools` refuses to run *any* command when ffmpeg is missing from PATH.
+    Without this those launcher tests pass on a developer box that happens to
+    have ffmpeg and fail on a CI runner that does not - which is exactly what
+    happened. Ambient ffmpeg is not what they are testing.
+
+    The stubs exist to satisfy `shutil.which`, never to be executed: they exit
+    non-zero and say so, so a test that starts shelling out to ffmpeg for real
+    fails loudly instead of quietly depending on the host. `check_tools` itself
+    is covered in `test_cli.py`, which patches `shutil.which` directly.
+    """
+    bin_dir = tmp_path_factory.mktemp("stub-bin")
+    for tool in ("ffmpeg", "ffprobe"):
+        stub = bin_dir / tool
+        stub.write_text(
+            "#!/bin/sh\n"
+            f"echo 'stub {tool}: the test suite must not execute this' >&2\n"
+            "exit 97\n"
+        )
+        stub.chmod(0o755)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+        yield bin_dir
 
 
 @pytest.fixture(autouse=True)
@@ -154,6 +184,51 @@ def base_script(model_root: Path) -> dict:
         },
         "scenes": [{"id": "opening", "prompt": "A test scene."}],
     }
+
+
+# ComfyUI-side model *names*, not paths: the server resolves them in its own
+# models directory. Fixed, because they appear in the golden graph and its hash.
+COMFY_MODELS = {
+    "diffusion_model": "minimax_h3_fl2va_pruned_bf16.safetensors",
+    "text_encoder": "qwen3vl_32b_minimax_h3_bf16.safetensors",
+    "video_vae": "minimax_h3_video_vae_fp16.safetensors",
+    "audio_vae": "minimax_h3_audio_vae_fp32.safetensors",
+}
+
+
+@pytest.fixture
+def comfy_script(base_script: dict) -> dict:
+    """A minimal comfy-backend script: no model/docker block, no refs."""
+    script = copy.deepcopy(base_script)
+    script.pop("model")
+    script.pop("docker")
+    script["backend"] = "comfy"
+    script["comfy"] = dict(COMFY_MODELS)
+    return script
+
+
+@pytest.fixture
+def write_comfy(project_root: Path, comfy_script: dict):
+    """Write a comfy-backend script and return its path."""
+
+    def _write(overrides: dict | None = None, filename: str = "comfy.yaml") -> Path:
+        data = deep_merge(comfy_script, overrides or {})
+        path = project_root / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(yaml.safe_dump(data, sort_keys=False))
+        return path
+
+    return _write
+
+
+@pytest.fixture
+def load_comfy(write_comfy, workspace):
+    from moviemakr.config import load_script
+
+    def _load(overrides: dict | None = None):
+        return load_script(write_comfy(overrides), workspace)
+
+    return _load
 
 
 @pytest.fixture

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 import pytest
 
 from moviemakr.errors import ConfigError
 from moviemakr.layout import RunLayout, slugify
-
 
 # --------------------------------------------------------------------------
 # slugify
@@ -94,7 +94,7 @@ def test_ensure_dirs_is_idempotent(layout):
 
 
 def test_layout_is_frozen(layout):
-    with pytest.raises(Exception):
+    with pytest.raises(dataclasses.FrozenInstanceError):
         layout.container = "webm"
 
 

@@ -47,13 +47,13 @@ def missing_modules() -> list[str]:
     return missing
 
 
-def create_app(workspace: Workspace) -> "FastAPI":
+def create_app(workspace: Workspace) -> FastAPI:
     from .app import create_app as _create_app
 
     return _create_app(workspace)
 
 
-def app_from_env() -> "FastAPI":
+def app_from_env() -> FastAPI:
     """Entry point for uvicorn's reloader, which needs an import string."""
     return create_app(Workspace.resolve())
 

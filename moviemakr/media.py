@@ -118,6 +118,53 @@ def extract_last_frame(clip: Path, dest: Path) -> bool:
 
 
 # --------------------------------------------------------------------------
+# tail clips - the overlap anchor handed to the next scene
+# --------------------------------------------------------------------------
+
+
+def tail_start(duration: float, frames: int, fps: int) -> float:
+    """Seek offset that leaves `frames` frames at the end of a clip."""
+    return max(0.0, duration - frames / fps)
+
+
+def tail_clip_cmd(src: Path, dest: Path, *, start: float, frames: int) -> list[str]:
+    """Cut the last `frames` frames of a clip, audio included, into one file.
+
+    Video and audio travel together on purpose: the next scene anchors both, and
+    a separate frame dump plus a separate wav would have to be re-aligned by
+    hand. Re-encoded rather than stream-copied because `-c copy` seeks to a
+    keyframe, which would silently deliver a different number of frames than the
+    assembly trim later removes.
+
+    Near-lossless (crf 12): this clip is a conditioning anchor, and its artefacts
+    would be baked into the next scene.
+    """
+    return [
+        "ffmpeg", "-v", "error", "-y",
+        "-ss", f"{start:.6f}", "-i", str(src),
+        "-frames:v", str(frames),
+        "-c:v", "libx264", "-crf", "12", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k",
+        "-shortest", str(dest),
+    ]
+
+
+def extract_tail_clip(clip: Path, dest: Path, frames: int, fps: int) -> bool:
+    """Write the last `frames` frames of `clip` (with audio) to `dest`."""
+    if frames < 1:
+        return False
+    duration = probe_clip(clip).get("duration")
+    if not duration:
+        return False
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        dest.unlink()
+    cmd = tail_clip_cmd(clip, dest, start=tail_start(duration, frames, fps), frames=frames)
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    return proc.returncode == 0 and dest.is_file() and dest.stat().st_size > 0
+
+
+# --------------------------------------------------------------------------
 # stills - evenly spaced frames pulled out of a rendered clip
 # --------------------------------------------------------------------------
 
@@ -222,12 +269,18 @@ def prepare_ref_video(src: Path, frame_dir: Path, width: int, height: int) -> Pa
 # --------------------------------------------------------------------------
 
 
-def normalize_cmd(src: Path, dest: Path, spec: NormalizeSpec, *, has_audio: bool) -> list[str]:
+def normalize_cmd(src: Path, dest: Path, spec: NormalizeSpec, *, has_audio: bool,
+                  skip_seconds: float = 0.0) -> list[str]:
     """Re-encode one clip to uniform codecs/size/fps so `concat -c copy` is safe.
 
     The generator writes PCM audio into WebM, which is off-spec and does not
     stream-copy reliably; clips are also free to differ in size. Scale-and-pad,
     never stretch.
+
+    `skip_seconds` drops the head of the clip, which is how an overlap-chained
+    scene stops repeating the frames it was anchored on. The seek goes *before*
+    `-i`, so video and audio are trimmed as one and stay in sync; trimming with
+    a filter would move only the video and slide the soundtrack forward.
     """
     codecs = spec.codecs
     vf = (
@@ -236,7 +289,10 @@ def normalize_cmd(src: Path, dest: Path, spec: NormalizeSpec, *, has_audio: bool
         f"fps={spec.fps},format=yuv420p"
     )
 
-    cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(src)]
+    cmd = ["ffmpeg", "-v", "error", "-y"]
+    if skip_seconds > 0:
+        cmd += ["-ss", f"{skip_seconds:.6f}"]
+    cmd += ["-i", str(src)]
     needs_silence = spec.keep_audio and not has_audio
     if needs_silence:
         # Give every output the same stream layout, even for a silent clip.
@@ -259,8 +315,8 @@ def normalize_cmd(src: Path, dest: Path, spec: NormalizeSpec, *, has_audio: bool
 
 def concat_list_text(paths: list[Path]) -> str:
     """ffmpeg concat demuxer list. Single quotes inside a path close and re-open."""
-    return "".join(f"file '{p.as_posix().replace(chr(39), chr(39) + chr(92) + chr(39) + chr(39))}'\n"
-                   for p in paths)
+    escaped = (p.as_posix().replace("'", "'" + chr(92) + "''") for p in paths)
+    return "".join(f"file '{path}'\n" for path in escaped)
 
 
 def concat_cmd(list_file: Path, dest: Path) -> list[str]:
@@ -283,10 +339,12 @@ def music_mix_cmd(src: Path, music: Path, dest: Path, gain_db: float, acodec: st
     ]
 
 
-def normalize_clip(src: Path, dest: Path, spec: NormalizeSpec) -> None:
+def normalize_clip(src: Path, dest: Path, spec: NormalizeSpec, *,
+                   skip_seconds: float = 0.0) -> None:
     probe = probe_clip(src)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    run_ffmpeg(normalize_cmd(src, dest, spec, has_audio=bool(probe.get("has_audio"))))
+    run_ffmpeg(normalize_cmd(src, dest, spec, has_audio=bool(probe.get("has_audio")),
+                             skip_seconds=skip_seconds))
 
 
 def run_ffmpeg(cmd: list[str]) -> subprocess.CompletedProcess:
