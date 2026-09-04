@@ -148,6 +148,66 @@ ul.plain li { padding: 0.35rem 0; border-bottom: 1px solid var(--line); }
 .pill-stale { color: var(--warn); border-color: currentColor; }
 .pill-failed { color: var(--bad); border-color: currentColor; }
 .pill-pending { color: var(--dim); }
+.pill-rendering {
+  color: var(--accent);
+  border-color: currentColor;
+  animation: pill-breathe 2s ease-in-out infinite;
+}
+
+@keyframes pill-breathe {
+  50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pill-rendering { animation: none; }
+}
+
+/* --- progress -------------------------------------------------------- */
+
+/* Read off the render's log files, so it is only ever approximate - the bar is
+   counted in whole scenes, and the striped sliver marks the one in flight
+   rather than pretending to know how far into it the render is. */
+
+.progress { margin: 0 0 0.9rem; }
+
+.progress-track {
+  position: relative;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.progress-done, .progress-now {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+}
+.progress-done { background: var(--good); border-radius: 999px; }
+
+.progress-now {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--accent) 0 0.35rem,
+    color-mix(in srgb, var(--accent) 40%, transparent) 0.35rem 0.7rem
+  );
+  background-size: 0.99rem 100%;
+  animation: progress-crawl 1.2s linear infinite;
+}
+
+@keyframes progress-crawl {
+  to { background-position: 0.99rem 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-now { animation: none; }
+}
+
+.progress-meta, .progress-scene { margin: 0.4rem 0 0; font-size: 0.85rem; }
+.progress-meta { color: var(--dim); }
+.progress-scene { color: var(--accent); }
+.progress-idle { color: var(--dim); }
 
 /* --- scene table ---------------------------------------------------- */
 
@@ -166,6 +226,7 @@ table.scenes th {
 }
 table.scenes td { padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--line); }
 table.scenes td.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr.state-rendering { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .row-actions { white-space: nowrap; }
 .row-actions a { margin-right: 0.6rem; font-size: 0.85rem; }
 .chain { color: var(--dim); font-size: 0.8em; }

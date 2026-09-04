@@ -21,8 +21,10 @@ from fastapi.templating import Jinja2Templates
 from ..config import Script, load_script
 from ..errors import ConfigError
 from ..layout import Workspace
+from ..report import fmt_duration, fmt_span
 from . import assets as A
 from . import browse as B
+from . import progress as P
 from . import scripts as S
 from .paths import UnsafePath, rel_key, safe_path, safe_stem
 
@@ -37,6 +39,8 @@ def create_app(workspace: Workspace) -> FastAPI:
     app = FastAPI(title="moviemakr", docs_url=None, redoc_url=None)
     templates = Jinja2Templates(directory=str(HERE / "templates"))
     templates.env.globals["human_size"] = B.human_size
+    templates.env.globals["fmt_duration"] = fmt_duration
+    templates.env.globals["fmt_span"] = fmt_span
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
     def page(request: Request, name: str, **context):
@@ -138,10 +142,11 @@ def create_app(workspace: Workspace) -> FastAPI:
 
     @app.get("/scripts/{key:path}/scenes", response_class=HTMLResponse)
     def script_scenes(request: Request, key: str):
-        """The polled fragment: just the scene table."""
+        """The polled fragment: the progress bar and the scene table."""
         script = get_script(key)
+        scenes = B.scene_table(script)
         response = page(request, "_scenes.html", key=key, script=script,
-                        scenes=B.scene_table(script))
+                        scenes=scenes, progress=P.run_progress(script, scenes))
         response.headers.update(NO_STORE)
         return response
 
@@ -171,11 +176,13 @@ def create_app(workspace: Workspace) -> FastAPI:
     def script_detail(request: Request, key: str):
         script = get_script(key)
         movie = script.layout.movie
+        scenes = B.scene_table(script)
         return page(
             request, "script.html",
             key=key,
             script=script,
-            scenes=B.scene_table(script),
+            scenes=scenes,
+            progress=P.run_progress(script, scenes),
             logs=B.log_files(script),
             movie=movie if movie.is_file() else None,
             movie_size=B.human_size(movie.stat().st_size) if movie.is_file() else "",

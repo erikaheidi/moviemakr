@@ -108,12 +108,41 @@ def test_raw_is_not_swallowed_by_the_catch_all(client):
     assert "<html" not in client.get("/scripts/h3/beach.yaml/raw").text
 
 
-def test_scenes_fragment_is_a_bare_table(client):
+def test_scenes_fragment_is_a_bare_fragment(client):
+    """The progress bar and the table, with no page around them."""
     response = client.get("/scripts/simple.yaml/scenes")
     assert response.status_code == 200
-    assert response.text.lstrip().startswith("<table") or "<table" in response.text
+    assert "<table" in response.text
+    assert "progress-track" in response.text
     assert "<html" not in response.text
     assert response.headers["cache-control"] == "no-store"
+
+
+def test_the_script_page_shows_how_far_the_render_got(client):
+    body = client.get("/scripts/simple.yaml").text
+    assert "1/2</b> rendered" in body
+    assert "width: 50%" in body
+
+
+def test_an_idle_run_says_so_and_does_not_poll_on_load(client):
+    body = client.get("/scripts/simple.yaml").text
+    assert "no render running" in body
+    assert 'id="live-toggle" checked' not in body
+
+
+def test_a_live_render_is_named_and_starts_the_page_polling(client, web_workspace):
+    """A log being written right now, for a scene with no clip yet."""
+    logs = web_workspace.renders_dir / "simple" / "logs"
+    (logs / "002-middle.attempt1.log").write_text("  |===>  | 3/20 - 175.60s/it\n")
+
+    body = client.get("/scripts/simple.yaml").text
+    assert "rendering <b>2. middle</b>" in body
+    assert "pass 3/20" in body
+    assert "pill-rendering" in body
+    assert 'id="live-toggle" checked' in body   # the live toggle, pre-armed
+
+    # And the polled fragment carries the same thing, so it keeps up to date.
+    assert "pass 3/20" in client.get("/scripts/simple.yaml/scenes").text
 
 
 # --- media -----------------------------------------------------------------

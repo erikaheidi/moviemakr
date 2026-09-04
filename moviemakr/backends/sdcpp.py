@@ -268,6 +268,10 @@ def run_scene(argv: Sequence[str], log_path: Path, name: str) -> int:
                 sys.stdout.write(line)
                 sys.stdout.flush()
                 log.write(line)
+                # Flushed per line, not per 8KB buffer: the web view reads
+                # progress out of this file while the render runs, and a
+                # buffered log lags the sampler by several minutes.
+                log.flush()
             return proc.wait()
         except KeyboardInterrupt:
             # Stop the container first; the client exits on its own once the

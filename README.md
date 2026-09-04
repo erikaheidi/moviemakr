@@ -369,9 +369,17 @@ and the app hands out workspace files.
 
 It is deliberately **read-only toward rendering** — no start, no cancel, no job
 queue. Renders stay on the CLI over ssh, where the terminal already does a
-better job. What the page adds is everything around them. The scene table has a
-`live` toggle that polls while an ssh-launched render is running, so you can
-watch progress from the sofa.
+better job. What the page adds is everything around them.
+
+A script page shows how far its render got: a bar counted in scenes, the scene
+in flight, and roughly how long the rest will take at the pace of the scenes
+that finished. It is read out of the run's own artefacts — `state.json` for what
+completed, the newest log file for what is happening now — so it works for a
+render started from any terminal, and it needs nothing running on the render
+box but the render. The scene table has a `live` toggle that polls every five
+seconds, and it arms itself when the page loads mid-render, so you can watch
+from the sofa. Nothing there is precise: a scene is several passes and only one
+of them reports steps, so every estimate is prefixed with `~`.
 
 Uploading matters more than it looks: reference images have to live under
 `assets/` for the container to see them, so being able to push a photo there

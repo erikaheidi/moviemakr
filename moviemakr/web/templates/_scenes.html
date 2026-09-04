@@ -1,4 +1,34 @@
-{# Polled fragment: replaced in place while a render runs over ssh. #}
+{# Polled fragment: the progress bar and the scene table, replaced in place
+   while a render runs over ssh. Both live here so one poll updates both. #}
+<div class="progress">
+  <div class="progress-track">
+    <span class="progress-done" style="width: {{ progress.percent }}%"></span>
+    {% if progress.running %}
+    <span class="progress-now" style="left: {{ progress.percent }}%; width: {{ progress.slice_percent }}%"></span>
+    {% endif %}
+  </div>
+  <p class="progress-meta">
+    <b>{{ progress.rendered }}/{{ progress.total }}</b> rendered
+    {%- if progress.stale %} · {{ progress.stale }} stale{% endif %}
+    {%- if progress.failed %} · {{ progress.failed }} failed{% endif %}
+    {%- if progress.pending %} · {{ progress.pending }} to go{% endif %}
+    {%- if progress.eta %} · <b>~{{ fmt_span(progress.eta) }}</b> left at this pace{% endif %}
+  </p>
+  {% if progress.active %}
+  <p class="progress-scene">
+    rendering <b>{{ progress.active.index }}. {{ progress.active.id }}</b>
+    {%- if progress.active.attempt > 1 %} (attempt {{ progress.active.attempt }}){% endif %}
+    {%- if progress.active.elapsed %} · {{ fmt_duration(progress.active.elapsed) }} in{% endif %}
+    {%- if progress.active.steps %} · pass {{ progress.active.step }}/{{ progress.active.steps }}
+      {%- if progress.active.pass_remaining %}, ~{{ fmt_span(progress.active.pass_remaining) }} of it left{% endif %}
+    {%- endif %}
+    · <a href="/scripts/{{ key }}/log/{{ progress.active.log_name }}">log</a>
+  </p>
+  {% elif progress.outstanding %}
+  <p class="progress-scene progress-idle">no render running</p>
+  {% endif %}
+</div>
+
 <table class="scenes">
   <thead>
     <tr>
@@ -7,15 +37,28 @@
   </thead>
   <tbody>
     {% for scene in scenes %}
-    <tr class="state-{{ scene.state }}">
+    {% set live = progress.active and progress.active.slug == scene.slug %}
+    <tr class="state-{{ scene.state }}{% if live %} state-rendering{% endif %}">
       <td class="num">{{ scene.index }}</td>
       <td>
         {{ scene.id }}
         {% if scene.chained %}<span class="chain" title="chained from the previous scene">⛓</span>{% endif %}
       </td>
-      <td><span class="pill pill-{{ scene.state }}">{{ scene.state }}</span></td>
+      <td>
+        {%- if live -%}
+          <span class="pill pill-rendering">rendering</span>
+        {%- else -%}
+          <span class="pill pill-{{ scene.state }}">{{ scene.state }}</span>
+        {%- endif -%}
+      </td>
       <td class="num">{{ scene.duration }}</td>
-      <td class="num">{{ scene.elapsed }}</td>
+      <td class="num">
+        {%- if live and progress.active.elapsed -%}
+          {{ fmt_duration(progress.active.elapsed) }}
+        {%- else -%}
+          {{ scene.elapsed }}
+        {%- endif -%}
+      </td>
       <td class="row-actions">
         {% if scene.clip %}
           <a href="/scripts/{{ key }}/clip/{{ scene.clip.name }}">play</a>
