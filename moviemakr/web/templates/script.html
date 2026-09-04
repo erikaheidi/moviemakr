@@ -26,7 +26,7 @@
   <div class="section-head">
     <h2>Scenes</h2>
     <label class="live">
-      <input type="checkbox" id="live-toggle"> live
+      <input type="checkbox" id="live-toggle" {% if progress.running %}checked{% endif %}> live
     </label>
   </div>
   <div id="scene-table" data-src="/scripts/{{ key }}/scenes">
@@ -34,7 +34,10 @@
   </div>
   <p class="hint">
     <b>stale</b> means the clip exists but the script changed since it rendered —
-    a render would redo it.
+    a render would redo it. Progress is read off the render's own log files, so
+    a scene shows as <b>rendering</b> while its log is still being written, and
+    the estimate is the mean of the scenes that finished — treat it as an order
+    of magnitude, not a countdown.
   </p>
 </section>
 
@@ -66,9 +69,10 @@
 
 <script>
 // The one dynamic thing on the site: while a render runs over ssh, state.json
-// changes under us. Poll the table fragment rather than reloading the page, so
-// the video keeps playing and the scroll position holds. Off by default -
-// this is usually read on a phone.
+// and the logs change under us. Poll the fragment rather than reloading the
+// page, so the video keeps playing and the scroll position holds. Off by
+// default - this is usually read on a phone - except when the page loaded with
+// a render already in flight, which is exactly when it is worth watching.
 (function () {
   var box = document.getElementById("scene-table");
   var toggle = document.getElementById("live-toggle");
@@ -81,20 +85,31 @@
       .catch(function () { /* a dropped tailnet link is not worth reporting */ });
   }
 
+  function start() {
+    if (!timer) { timer = setInterval(refresh, 5000); }
+  }
+
+  function stop() {
+    clearInterval(timer);
+    timer = null;
+  }
+
   toggle.addEventListener("change", function () {
     if (toggle.checked) {
       refresh();
-      timer = setInterval(refresh, 5000);
+      start();
     } else {
-      clearInterval(timer);
-      timer = null;
+      stop();
     }
   });
 
+  // Rendered `checked` when a render was under way as the page was built.
+  if (toggle.checked) { start(); }
+
   // Stop polling when the tab is backgrounded; phones keep timers alive.
   document.addEventListener("visibilitychange", function () {
-    if (document.hidden && timer) { clearInterval(timer); timer = null; }
-    else if (!document.hidden && toggle.checked && !timer) { timer = setInterval(refresh, 5000); }
+    if (document.hidden) { stop(); }
+    else if (toggle.checked) { refresh(); start(); }
   });
 })();
 </script>

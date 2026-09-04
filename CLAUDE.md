@@ -72,7 +72,7 @@ midpoints, never the first or last frame, which are the blurriest.
 ### Tests
 
 ```bash
-.venv/bin/pytest                    # 576 tests, under three seconds
+.venv/bin/pytest                    # 602 tests, under three seconds
 .venv/bin/ruff check .              # config lives in pyproject.toml
 ```
 
@@ -189,6 +189,7 @@ over ssh, and drafts are expanded by an agent, not the server (see below).
 | --- | --- | --- |
 | `paths.py` | `safe_path`, `safe_stem` — the security boundary | no |
 | `browse.py` | workspace → plain dicts for the templates | no |
+| `progress.py` | how far a render got, read off `state.json` and the logs | no |
 | `assets.py` | image upload validation/resize, thumbnail cache (ffmpeg) | no |
 | `scripts.py` | YAML upload validation and placement under `scripts/` | no |
 | `app.py` | `create_app`, every route | **yes** |
@@ -221,9 +222,32 @@ the data is in this repo. The two uploaders differ on purpose:
   The index already renders an unloadable script as an error row.
 
 A script that fails to load is rendered as an error row, never raised — one bad
-YAML must not take the index down. Polling the scene table (the one dynamic
-thing on the site) is ~20 lines of inline `fetch`, not a JS framework: nothing is
+YAML must not take the index down. Polling the scene fragment (the one dynamic
+thing on the site) is ~30 lines of inline `fetch`, not a JS framework: nothing is
 vendored and there is no CDN dependency.
+
+**`progress.py` infers a running render rather than being told about one.**
+Nothing can tell it: the render is a separate process, usually at the other end
+of an ssh session, and the app must never reach out to Docker or ComfyUI to ask
+— a page render cannot be allowed to block on a busy render host. So it reads
+the two things a render leaves on disk:
+
+- `state.json` gives the scenes that finished and how long each took, which is
+  where the "~2h19m left" estimate comes from — the mean of what finished.
+- The newest file in `logs/` gives the scene in flight. A scene counts as
+  rendering when its log was written inside `ACTIVE_SECONDS` (5 minutes,
+  generous because sdcpp goes quiet for minutes while it loads weights) *and*
+  the scene is still `pending`. That second condition is what stops the last log
+  of a finished run reading as a live one.
+
+Each backend contributes one line, parsed out of the log tail: sdcpp's sampler
+bar (`| 7/20 - 175.60s/it`) and comfy's poll heartbeat (`still rendering
+(12m32s)`). Those two formats are a real coupling — `sdcpp.run_scene` flushes
+its log per line for exactly this reason — so `tests/test_web_progress.py` pins
+both. A sampler pass is not the whole scene (sdcpp still has to decode the
+latents afterwards), so the page says "pass 7/20", never "35% of the scene", and
+the bar itself is counted in whole scenes with a striped sliver marking the one
+that is running.
 
 `starlette>=0.45` is a hard floor in the `web` extra, not a preference —
 `FileResponse` only learned HTTP Range there, and without Range iOS cannot

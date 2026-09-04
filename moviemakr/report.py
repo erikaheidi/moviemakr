@@ -17,6 +17,22 @@ def fmt_duration(seconds: float | None) -> str:
     return f"{seconds:.1f}s"
 
 
+def fmt_span(seconds: float | None) -> str:
+    """A rough duration, to the minute: "2h19m", "19m", "45s".
+
+    Separate from `fmt_duration` because it is for estimates, not measurements -
+    a scene took 25m44s, but the hours a render still has to go should not
+    pretend to that kind of precision, and "139m01s" does not read as anything.
+    """
+    if seconds is None:
+        return "-"
+    minutes, secs = divmod(int(seconds), 60)
+    if not minutes:
+        return f"{secs}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h{minutes:02d}m" if hours else f"{minutes}m"
+
+
 def format_summary(
     results: list[dict[str, Any]],
     logs_dir: Path,

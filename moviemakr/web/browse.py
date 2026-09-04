@@ -179,6 +179,9 @@ def scene_table(script: Script) -> list[dict[str, Any]]:
             "state": row["state"],
             "duration": fmt_duration(probe.get("duration")),
             "elapsed": fmt_duration(row.get("elapsed")),
+            # Raw seconds too: `progress` averages them into an estimate, and
+            # the formatted string is for the column, not for arithmetic.
+            "elapsed_s": row.get("elapsed"),
             "size": probe.get("width") and f"{probe['width']}x{probe['height']}" or "-",
             "clip": clip if clip.is_file() else None,
             "clip_size": human_size(_size(clip)) if clip.is_file() else "",

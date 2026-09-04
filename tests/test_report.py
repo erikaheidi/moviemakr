@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from moviemakr.report import fmt_duration, format_summary
+from moviemakr.report import fmt_duration, fmt_span, format_summary
 
 LOGS = Path("/out/logs")
 
@@ -97,3 +97,15 @@ def test_no_movie_line_when_absent(tmp_path):
 def test_empty_results_does_not_crash():
     lines = format_summary([], LOGS, None)
     assert any("total" in line for line in lines)
+
+
+# --- estimates -------------------------------------------------------------
+
+
+def test_fmt_span_rolls_over_into_hours():
+    """The web view's estimate: "139m01s" does not read as two hours."""
+    assert fmt_span(8341) == "2h19m"
+    assert fmt_span(1142) == "19m"
+    assert fmt_span(45) == "45s"
+    assert fmt_span(3600) == "1h00m"
+    assert fmt_span(None) == "-"
