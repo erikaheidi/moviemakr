@@ -34,7 +34,7 @@ def test_defaults_match_legacy():
 
 def test_fields_covers_every_dataclass_field():
     declared = {f.name for f in dataclasses.fields(SceneSettings)}
-    assert SceneSettings.FIELDS == declared
+    assert declared == SceneSettings.FIELDS
 
 
 def test_merge_overrides_only_given_keys():

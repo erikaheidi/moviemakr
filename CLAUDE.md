@@ -50,7 +50,7 @@ emits only container-side paths, and refs are hashed by content.
 export MOVIEMAKR_WORKSPACE=~/moviemakr-workspace
 cd "$MOVIEMAKR_WORKSPACE"                          # script paths are just paths
 
-moviemakr render   scripts/h3/beach.yaml --dry-run  # print docker commands, render nothing
+moviemakr render   scripts/h3/beach.yaml --dry-run  # print the plan, render nothing
 moviemakr render   scripts/h3/beach.yaml            # render all scenes, then assemble
 moviemakr status   scripts/h3/beach.yaml            # per-scene state + measured durations
 moviemakr assemble scripts/h3/beach.yaml            # re-stitch from existing clips
@@ -72,7 +72,8 @@ midpoints, never the first or last frame, which are the blurriest.
 ### Tests
 
 ```bash
-.venv/bin/python -m pytest          # ~575 tests, under a second
+.venv/bin/pytest                    # 576 tests, under three seconds
+.venv/bin/ruff check .              # config lives in pyproject.toml
 ```
 
 The suite is hermetic — no Docker, GPU, or ffmpeg. That works because `sd_args`
@@ -82,33 +83,49 @@ The web tests keep that property: ffmpeg is monkeypatched in
 `tests/test_web_assets.py`, and the `web_workspace` fixture stores a probe in
 `state.json` so the scene table never reaches ffprobe.
 
+The comfy tests are hermetic the same way: they assert on the built graph and on
+the parsing of canned `/history`, `/queue` and `/object_info` payloads, so nothing
+needs a ComfyUI running.
+
 `tests/test_web_routes.py` `importorskip`s FastAPI and httpx, so the suite still
-runs with nothing but pytest and PyYAML — it just covers less. Install the
-extras to get the route coverage:
+runs with nothing but pytest and PyYAML — it just covers less. The environment is
+locked, so recreate it with `sync`, not an ad-hoc install:
 
 ```bash
-uv venv .venv && uv pip install --python .venv/bin/python -e '.[web,dev]'
+uv sync --extra web --extra dev
 ```
 
-There is no pip or ensurepip on this box; the venv was made with
-`uv venv .venv && uv pip install --python .venv/bin/python pytest PyYAML`.
+There is no pip or ensurepip on this box — everything goes through `uv`.
+`uv.lock` pins the whole environment including ruff, so **edit `pyproject.toml`
+and you must run `uv lock`**: CI uses `uv sync --locked` and fails on drift.
 
-**`tests/test_fingerprint.py` and `tests/test_sd_args.py` are the anchor.** Their
-golden values were captured from the pre-package single-file version. A scene is
-skipped when its stored fingerprint matches, so if the hash drifts, every scene
-of every existing run silently re-renders at hours apiece. Treat a golden failure
-as a real regression, not a value to update — unless you have deliberately
-changed `sd_args` and accept re-rendering everything.
+`.github/workflows/tests.yml` runs three jobs on every push: pytest on 3.11-3.14,
+pytest again with the `web` extra deliberately *absent* (the invariant that only
+`web/app.py` imports FastAPI has no other enforcement), and `ruff check`.
+
+**The golden tests are the anchor.** `tests/test_fingerprint.py` and
+`tests/test_sd_args.py` hold sdcpp's, captured from the pre-package single-file
+version; `tests/test_comfy_graph.py` holds comfy's golden graph *and* its golden
+fingerprint. A scene is skipped when its stored fingerprint matches, so if a hash
+drifts, every scene of every existing run silently re-renders at hours apiece.
+Treat a golden failure as a real regression, not a value to update — unless you
+have deliberately changed `sd_args` or `build_graph` and accept re-rendering
+everything on that backend.
 
 Selective/iterative rendering: `--only 2,4-6` (by index), `--scene kitchen,feast`
 (by id), `--force` (re-render even if up to date), `--retries N` (default 2),
-`--halt-on-failure`, `--no-assemble`, `--allow-cpu` (skip the GPU preflight).
+`--halt-on-failure`, `--no-assemble`, `--allow-cpu` (skip the GPU preflight —
+sdcpp only; comfy's server preflight has no override).
 
-Always start a new script with `--dry-run` — it prints the exact `docker run` for
-every scene without spending GPU time. Rendering a real scene costs minutes to
-hours (≈39 GB of weights reload per invocation), so avoid triggering actual
-renders while developing; use `--dry-run` to validate changes to command
-construction.
+Always start a new script with `--dry-run`. It prints what each scene would
+actually submit — the exact `docker run` on sdcpp, the API graph on comfy —
+without spending GPU time, and needs neither Docker nor a running ComfyUI. On
+comfy it also runs `pairing_warnings`, so a ref2va/fl2va mismatch surfaces there.
+
+Rendering a real scene costs minutes to hours (on sdcpp, ≈39 GB of weights reload
+per invocation; on comfy the weights stay resident but a step still costs ~74s at
+544x960x90), so avoid triggering actual renders while developing — use `--dry-run`
+to validate changes to command and graph construction.
 
 ## Architecture
 
@@ -125,7 +142,7 @@ and the four leaves at the top depend on nothing but stdlib and `errors`:
 | `config.py` | `SceneSettings`, `Scene`, `Script`, `load_script` | errors, layout, media |
 | `backends/__init__.py` | the `backend:` registry, `check_name`, `resolve` | errors |
 | `backends/sdcpp.py` | `sd_args`, `fingerprint`, `docker_argv`, `check_gpu`, `run_scene` | errors, layout, config |
-| `backends/comfy.py` | `build_graph`, `fingerprint`, frame-grid helpers | config |
+| `backends/comfy.py` | `build_graph`, `fingerprint`, the HTTP client, `check_server`, `run_scene` | config |
 | `assemble.py` | normalize → concat → optional music mix | layout, config, media |
 | `render.py` | `RenderOptions`, the render loop and its helpers | most of the above |
 | `status.py` | `scene_rows` — per-scene state incl. **stale** | config, backends, render, state, media |
@@ -272,7 +289,7 @@ sdcpp has two, both riding the model's `--ref-image`:
   contribute their last frame, so `--only`/`--scene` runs don't break downstream
   continuity.
 
-comfy adds a third that sd-cli cannot express, `overlap_frames` (default 22):
+comfy adds a third that sd-cli cannot express, `overlap_frames` (default 5):
 
 - The **tail of the previous clip** — video *and* its soundtrack — is anchored at
   frame 0 of the next scene through `MiniMaxH3AddGuide`, then trimmed back off at
@@ -285,8 +302,15 @@ comfy adds a third that sd-cli cannot express, `overlap_frames` (default 22):
   value must not change how yesterday's clip is cut.
 - Both cuts seek *before* `-i` so video and audio move together. A filter-side
   trim would shift the picture and leave the sound where it was.
-- It costs compute: at length 124 an overlap of 22 keeps 102 new frames, so about
-  18% of each scene is regenerated and thrown away.
+- **It costs compute per sampling step, not just in wasted frames.** The anchor's
+  keyframe latents ride through *every* step exactly like reference tokens do.
+  Measured on one scene at 544x960x90: no anchor 84.2s/step, 5 frames 93.8s
+  (+11%), 22 frames 137.8s (+64%) — a 22-frame anchor doubled the scene for 0.9s
+  of shared motion against 0.2s.
+- **The default is 5**, the shortest length on the 17k+5 grid that still carries
+  its slice of audio; the seam held up at that length. It was 22 while the
+  mechanism was being proven, which is what the measurements below used. `0` is a
+  hard cut, and the key is inert on sdcpp.
 
 **Measured on gfx1151**, two 56-frame scenes at 640x384 with a 22-frame overlap:
 7m26s under `--cache-ram 24 96` (10m25s under `--cache-none`). The anchored frames
@@ -338,12 +362,18 @@ reference it cites. `<workspace>/scripts/h3/josy-beach-drive.yaml` cites both
 `<Picture 1>` and `<Picture 2>` throughout, and porting it would need each
 decremented by one.
 
-Two other things a port has to change:
+Other things a port has to change or accept:
 
 - `model:` and `docker:` are rejected for `backend: comfy` - the model names move
   under `comfy:`, and they are ComfyUI-side *names*, not host paths.
 - `ref_videos` and `continuity.anchor_videos` are not supported yet; they need the
   node's `ref_video_N` inputs plus index-paired soundtracks. Rejected at load.
+- At most `MAX_COMFY_REFS` (9) reference images per scene, the ceiling of
+  `MiniMaxH3ReferenceToVideo`'s autogrow `ref_image_N` inputs. Rejected at load.
+- **The port re-renders everything.** Fingerprints are per backend by design, so
+  no clip rendered by sd-cli can be resumed from after the switch. Budget for a
+  full run, and keep the old script rather than editing it in place if the
+  existing renders still matter.
 
 ### What has actually been run on the comfy backend
 
@@ -421,20 +451,32 @@ assumed — the model rounds `video_frames` up.
   .cache/thumbs/  web thumbnails, disposable
 ```
 
-Inside a run dir: `scenes/` raw model output · `frames/` last frame per scene
-(for chaining) · `normalized/` uniform intermediates for concat · `refvideos/`
-extracted reference frames · `logs/` per-attempt logs · `state.json`
-fingerprints/timings/probes · `<script-name>.mp4` the finished movie.
+Inside a run dir: `scenes/` raw model output (`.webm` from sd-cli, `.mp4` from
+ComfyUI's `SaveVideo`) · `frames/` last frame per scene (for chaining) ·
+`normalized/` uniform intermediates for concat · `refvideos/` extracted reference
+frames · `logs/` per-attempt logs · `state.json` fingerprints/timings/probes ·
+`<script-name>.mp4` the finished movie.
+
+`frames/` and `refvideos/` are sdcpp's. A comfy run chains on the clip itself and
+rejects ref videos, so it writes neither; its anchor clips and reference images
+go into ComfyUI's own `input_dir`.
 
 Only `renders/` and `.cache/` are disposable; keep the workspace under its own
 git repo, separate from this checkout.
 
 ## Script format
 
-See `examples/example.yaml` for the fully commented template: `model` paths,
-`docker` settings, `defaults` (any key overridable per scene), `continuity`,
-`output`, then an ordered `scenes` list. `style_suffix` is appended to every
-prompt to keep the look consistent.
+See `examples/example.yaml` for the fully commented template (it is an sdcpp
+script): `model` paths, `docker` settings, `defaults` (any key overridable per
+scene), `continuity`, `output`, then an ordered `scenes` list. `style_suffix` is
+appended to every prompt to keep the look consistent.
+
+The engine block is the only part that differs by backend. `backend: comfy`
+**rejects** `model:` and `docker:` and takes a `comfy:` block instead — `url`,
+`input_dir`, `output_dir` (both checked to exist at load), the four model
+*names*, and optionally `lora`/`lora_strength`, `steps`, `sampler`, `scheduler`,
+`shift_video`, `shift_audio`, `ref_image_size`. Working examples live in
+`<workspace>/scripts/comfy/` and `<workspace>/scripts/h3/josy-snake-dream-v2.yaml`.
 
 **Unknown keys are a hard error**, in every block, with a did-you-mean
 suggestion. Adding a new setting therefore means adding it to `SceneSettings`
@@ -466,17 +508,19 @@ The guide's output is plain labelled prose, so it drops straight into a scene's
 - **Use a literal block scalar (`|-`), not `>-`.** The folded scalar collapses the
   field labels onto one line. Existing single-sentence prompts can stay on `>-`.
 - **Set `style_suffix: ""` on H3-structured scripts.** `full_prompt()`
-  ([moviemakr.py:69-73](moviemakr.py#L69-L73)) appends the suffix as `. <suffix>`
+  ([config.py](moviemakr/config.py)) appends the suffix as `. <suffix>`
   at the very end — after `non_diegetic_music:` — which reads as part of the music
   description. Put the look in `detailed_description` instead.
-- **Reference labels follow the `-r` order in `sd_args`.** Refs are ordered
+- **Reference labels follow the `-r` order in `sd_args`** — on sdcpp. Refs are ordered
   chained-previous-frame first (inserted at index 0 in `render`), then
   `continuity.anchors`, then the scene's own `ref_images`; `--increase-ref-index`
   gives each its own index. So `<Picture 1>` is the previous scene's last frame on
   a chained scene, and the first anchor on a scene with `chain_from_previous:
   false`. Number the labels against the scene's actual ref list, not the YAML
   reading order. Reference *videos* arrive as `--ref-video` frame directories
-  after the images.
+  after the images. **On comfy the chained content is an overlap anchor rather
+  than a reference, so it takes no index and `<Picture 1>` is the first anchor
+  whether or not the scene chains** — see "Porting a chained script" above.
 
 Validate any rewrite with `--dry-run` before spending GPU time — it prints the
 exact `--prompt` string that will reach `sd-cli`.

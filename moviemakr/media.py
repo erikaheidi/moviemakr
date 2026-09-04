@@ -315,8 +315,8 @@ def normalize_cmd(src: Path, dest: Path, spec: NormalizeSpec, *, has_audio: bool
 
 def concat_list_text(paths: list[Path]) -> str:
     """ffmpeg concat demuxer list. Single quotes inside a path close and re-open."""
-    return "".join(f"file '{p.as_posix().replace(chr(39), chr(39) + chr(92) + chr(39) + chr(39))}'\n"
-                   for p in paths)
+    escaped = (p.as_posix().replace("'", "'" + chr(92) + "''") for p in paths)
+    return "".join(f"file '{path}'\n" for path in escaped)
 
 
 def concat_cmd(list_file: Path, dest: Path) -> list[str]:

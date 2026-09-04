@@ -57,11 +57,11 @@ class Workspace:
     root: Path
 
     @classmethod
-    def at(cls, root: Path) -> "Workspace":
+    def at(cls, root: Path) -> Workspace:
         return cls(root=Path(root).expanduser().resolve())
 
     @classmethod
-    def resolve(cls, explicit: Path | None = None) -> "Workspace":
+    def resolve(cls, explicit: Path | None = None) -> Workspace:
         """Pick the workspace: the explicit argument, else $MOVIEMAKR_WORKSPACE.
 
         There is deliberately no third fallback. The checkout used to serve as
@@ -119,7 +119,7 @@ class RunLayout:
     @classmethod
     def build(cls, *, run_dir: Path, model_root: Path | None, assets_dir: Path,
               name_slug: str, container: str,
-              clip_suffix: str = CLIP_SUFFIX) -> "RunLayout":
+              clip_suffix: str = CLIP_SUFFIX) -> RunLayout:
         return cls(
             run_dir=run_dir.resolve(),
             model_root=model_root.resolve() if model_root is not None else None,

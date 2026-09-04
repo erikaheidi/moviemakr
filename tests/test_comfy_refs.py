@@ -318,7 +318,8 @@ def test_validate_catches_a_missing_required_input():
     from moviemakr.backends.comfy import validate_graph
 
     graph = {"cond": {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": {"clip": ["c", 0]}}}
-    assert any("missing required input 'prompt'" in p for p in validate_graph(graph, autogrow_info()))
+    problems = validate_graph(graph, autogrow_info())
+    assert any("missing required input 'prompt'" in p for p in problems)
 
 
 def test_validate_catches_an_unknown_node_type():

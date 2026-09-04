@@ -50,7 +50,7 @@ class RenderOptions:
     allow_cpu: bool = False
 
     @classmethod
-    def from_args(cls, args: argparse.Namespace) -> "RenderOptions":
+    def from_args(cls, args: argparse.Namespace) -> RenderOptions:
         return cls(
             only=args.only,
             scene=args.scene,
@@ -279,9 +279,8 @@ def chain_frame(scene: Scene, script: Script, *, refresh: bool = False) -> Path 
     layout = script.layout
     frame = layout.frame(scene.slug)
     clip = layout.clip(scene.slug)
-    if refresh or (not frame.is_file() and clip.is_file()):
-        if clip.is_file():
-            extract_last_frame(clip, frame)
+    if clip.is_file() and (refresh or not frame.is_file()):
+        extract_last_frame(clip, frame)
     return frame if frame.is_file() else None
 
 

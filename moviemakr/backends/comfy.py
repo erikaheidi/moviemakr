@@ -16,6 +16,7 @@ readable ids keep the golden graph in the tests diffable.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import shutil
@@ -605,10 +606,10 @@ def check_server(script: Script) -> tuple[bool, str]:
 
 def interrupt(url: str) -> None:
     """Stop the running prompt; the analogue of killing the sdcpp container."""
-    try:
+    # Best effort on the way out: the caller is already tearing the render down,
+    # and a server that will not answer is not a reason to fail louder.
+    with contextlib.suppress(Exception):
         post_json(f"{url}/interrupt", {})
-    except Exception:  # noqa: BLE001 - best effort on the way out
-        pass
 
 
 def effective_overlap(scene, *, has_previous: bool) -> int:
@@ -655,7 +656,7 @@ def prepare_refs(script: Script, refs: Sequence[Path], *,
     for ref in refs:
         name = ref_input_name(script, ref)
         dest = comfy.input_dir / name
-        if not dry_run and ref.is_file():
+        if not dry_run and ref.is_file():  # noqa: SIM102 - two separate concerns
             # Content-addressed, so an existing file of the same name is the same
             # image and re-copying it would only churn the disk.
             if not dest.is_file() or dest.stat().st_size != ref.stat().st_size:
@@ -763,10 +764,8 @@ class _TermAsInterrupt:
 
     def __exit__(self, *_exc):
         if self._prev is not None:
-            try:
+            with contextlib.suppress(ValueError, OSError):  # not the main thread
                 signal.signal(signal.SIGTERM, self._prev)
-            except (ValueError, OSError):
-                pass
         return False
 
 

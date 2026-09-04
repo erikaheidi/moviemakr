@@ -10,7 +10,6 @@ import pytest
 from moviemakr.web import browse as B
 from moviemakr.web.paths import rel_key
 
-
 # --- discovery -------------------------------------------------------------
 
 

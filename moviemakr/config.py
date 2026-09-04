@@ -187,7 +187,7 @@ class SceneSettings:
 
     FIELDS: ClassVar[frozenset[str]] = frozenset(_COERCERS)
 
-    def merge(self, overrides: Mapping[str, Any], where: str) -> "SceneSettings":
+    def merge(self, overrides: Mapping[str, Any], where: str) -> SceneSettings:
         check_keys(where, overrides, self.FIELDS)
         return dataclasses.replace(
             self,
@@ -453,8 +453,10 @@ def load_script(script_path: Path, workspace: Workspace) -> Script:
             steps=_positive_int("steps", comfy_raw.get("steps", DEFAULT_COMFY_STEPS), "comfy"),
             sampler=str(comfy_raw.get("sampler") or DEFAULT_COMFY_SAMPLER),
             scheduler=str(comfy_raw.get("scheduler") or DEFAULT_COMFY_SCHEDULER),
-            shift_video=_float("shift_video", comfy_raw.get("shift_video", DEFAULT_SHIFT_VIDEO), "comfy"),
-            shift_audio=_float("shift_audio", comfy_raw.get("shift_audio", DEFAULT_SHIFT_AUDIO), "comfy"),
+            shift_video=_float(
+                "shift_video", comfy_raw.get("shift_video", DEFAULT_SHIFT_VIDEO), "comfy"),
+            shift_audio=_float(
+                "shift_audio", comfy_raw.get("shift_audio", DEFAULT_SHIFT_AUDIO), "comfy"),
             ref_image_size=_one_of(
                 comfy_raw.get("ref_image_size", "match"), REF_IMAGE_SIZES, "comfy.ref_image_size"),
         )

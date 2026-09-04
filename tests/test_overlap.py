@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+from moviemakr.assemble import overlap_trim
 from moviemakr.backends.comfy import (
     align_canvas,
     align_down,
@@ -16,7 +17,6 @@ from moviemakr.backends.comfy import (
     effective_overlap,
     fingerprint,
 )
-from moviemakr.assemble import overlap_trim
 from moviemakr.media import NormalizeSpec, normalize_cmd, tail_clip_cmd, tail_start
 
 SPEC = NormalizeSpec(width=540, height=960, fps=24, container="mp4", keep_audio=True)
